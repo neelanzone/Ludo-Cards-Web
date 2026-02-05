@@ -1,0 +1,63 @@
+,,,,,,
+,"id (e.g., Attack01)",name,category (attack/defense/movement/board),requiresTarget (none / ally / enemy / tile),timing (during turn / after move / reaction),effectSummary (one sentence)
+,Board02,Double It,Board,self,during turn,"Double any one of 
+your dice rolls"
+,Board01,Double It 2x,Board,self,during turn,"Double both of 
+your dice rolls"
+,Board04,Reroll,Board,self,during turn,"Reroll one dice 
+and choose which 
+roll to take"
+,Board03,Reroll 2x,Board,self,during turn,"Reroll both dice 
+and choose which 
+roll to take"
+,Board12,Shuffle,Board,opponent,during turn,All players give their action card decks to the player on their left
+,Board07,Steal,Board,opponent,during turn,"Steal a card of 
+your choice from 
+a player’s deck "
+,Board08,Trade,Board,opponent,during turn,Exchange a card from your hand with a card of your choice from another player
+,Board05,"Robbin’
+Hood",Board,opponent,during turn,Steal a whole deck from a player and distribute the cards with other players how you see fit
+,Board11,Stun,Board,opponent,during turn,"A player of your choice 
+is stunned and skips 
+their turn"
+,Board09,Dumpster Dive,Board,self,during turn,"You have 1 minute to go through the discard pile and keep two cards 
+of your choice"
+,Board06,"Sands
+of Time",Board,self,during turn,"All players are skipped, 
+and you take your next 
+turn immediately"
+,Board10,Mimic,Board,self,during turn,"Copy the last card 
+played by the player 
+before you"
+,Movement02,Boots of Speed,Movement,self,during turn,"Add +4 to any one of your movement dice roll, pawn interactions while moving still apply"
+,Movement03,Dash,Movement,self,during turn,"Add +6 to any one of your movement dice roll, pawn interactions while moving still apply"
+,Movement08,Teleport,Movement,self,during turn,"Teleport to any tile up to  6 tiles forward or backward,
+pawn interactions  do not apply"
+,Movement05,Jump,Movement,self,during turn,"Jump over a tile, if any pawns are present on the tile, interactions do not apply"
+,Movement07,Swap,Movement,opponent,during turn,Swap any pawn on the board with any pawn of your choice
+,Movement06,Slow,Movement,opponent,during turn,"As a reaction, you can reduce an opponent’s pawn’s movement by half - rounded down"
+,Movement04,Force pull,Movement,opponent,during turn,Pull any pawn closer to your pawn by 3 tiles
+,Movement01,Astral link,Movement,opponent,during turn,"As a reaction, link your pawn to an opponent’s pawn closest to you - for one round, your pawn will get pulled the same number of tiles as them"
+,Movement04,Force Push,Movement,opponent,during turn,Push any pawn away from your pawn by 3 tiles
+,Attack02,Dagger,Attack,opponent,during turn,"Increases 
+attack range  up to 1 tile"
+,Attack01,Crossbow,Attack,opponent,during turn,"Increases 
+attack range  up to 3 tiles"
+,Attack04,Long Bow,Attack,opponent,during turn,"Increases
+attack range  up to 6 tiles"
+,Attack05,Magic Spear,Attack,opponent,during turn,"Increases attack range up to 2 tiles, can attack through walls"
+,Attack03,Laser,Attack,opponent,during turn,Attacks all pawns in a single line till the end of the board front and back
+,Attack06,Pandemic,Attack,opponent,during turn,"Infects the pawn, any pawn within 1 tile range is also infected. On your turn, roll 3 or higher to survive."
+,Defence07,Vaccine,Defence,self,reaction,Cures any infections
+,Defence05,Resurrect,Defence,self,during turn,"Bring a pawn back on the board after being removed, they start at home"
+,Defence06,Stink Bomb,Defence,self,reaction,"As reaction, distract an attack on you, attacker has to roll  4 or above to make a successful attack"
+,Defence01,Chainmail,Defence,self,reaction,"As a reaction, 
+defends against any 
+attack, except for Laser"
+,Defence02,Eel Armour,Defence,self,reaction,"As a reaction, defends against any attack except for Laser,  against melee - the attacker takes a point of damage"
+,Defence03,Mirror,Defence,self,reaction,"As a reaction, 
+deflects laser 
+at a right angle"
+,Defence04,Resist,Defence,self,reaction,"As a reaction, 
+cancel a pawn’s 
+action against you"

@@ -1,16 +1,17 @@
-# ludo_rpg
+# Ludo RPG
 
-A new Flutter project.
+An experimental card based RPG-style expansion of classic Ludo, built with Flutter.
 
-## Getting Started
+## Status
+Alpha (v0.1.0)
 
-This project is a starting point for a Flutter application.
+## Features
+- Card-based mechanics (Attack / Defence / Movement / Board)
+- Animated fan hand
+- Draw & discard piles
+- Desktop-first prototype
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Roadmap
+- Fix hover animation glitches
+- Add card effects
+- Board integration

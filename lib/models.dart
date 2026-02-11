@@ -62,9 +62,11 @@ class LudoToken {
   final String id;
   final LudoColor color;
 
-  /// -1: Base, 0-51: Main Track (relative to player start),
-  /// 52-57: Home Stretch (for THAT token's color),
-  /// 99: Home/Goal
+  /// **STRICT RELATIVE POSITIONING**
+  /// -1: Base (Safe)
+  /// 0..51: Main Track (Relative to THIS token's start color)
+  /// 52..57: Home Stretch (Relative, 0th step is 52)
+  /// 99: Goal/Finished
   int position;
   TokenStatus status;
   

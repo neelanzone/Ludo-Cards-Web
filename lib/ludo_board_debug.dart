@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'models.dart';
+import 'dart:math';
 
-class LudoBoard extends StatelessWidget {
+class LudoBoardDebug extends StatelessWidget {
   final List<LudoPlayer> players;
   
-  const LudoBoard({super.key, required this.players});
+  const LudoBoardDebug({super.key, required this.players});
 
   @override
   Widget build(BuildContext context) {
@@ -164,12 +165,6 @@ class LudoBoardPainter extends CustomPainter {
           }
           
           // Offsets for the 4 circles
-          double offX = (index % 2 == 0) ? cw * 2.5 : cw * 4.5; // Adjusted visually
-          double offY = (index < 2) ? ch * 2.5 : ch * 4.5; 
-          
-          // Actually, let's use the explicit math from _drawBase
-          // _drawBase uses logic: x + w * 0.15 + w*0.175 etc..
-          // w = cw * 6
           
           double w = cw * 6;
           
@@ -186,19 +181,6 @@ class LudoBoardPainter extends CustomPainter {
       
       // 2. Main Track (0-51)
       if (token.position >= 0 && token.position < 52) {
-          // Coordinates map ... this is tedious.
-          // Let's define the path of 52 cells starting from Red's start (1, 6)
-          // 0 -> (1,6)
-          // 1 -> (2,6) ... (5,6)
-          // Then up (6,5) ... (6,0)
-          // Then right (7,0) ? No, that's top middle.
-          
-          List<Point<int>> path = _getMainTrackPath();
-          // Adjust for player offset?
-          // The 'position' in Token should be absolute (0-51 relative to board) or relative to player?
-          // Let's say relative to player start.
-          // 0 is the start cell for that color.
-          
           int startOffset = 0;
           switch (token.color) {
              case LudoColor.red: startOffset = 0; break;
@@ -207,6 +189,7 @@ class LudoBoardPainter extends CustomPainter {
              case LudoColor.blue: startOffset = 39; break;
           }
           
+          List<Point<int>> path = _getMainTrackPath();
           int absPos = (token.position + startOffset) % 52;
           Point<int> p = path[absPos];
           return Offset((p.x + 0.5) * cw, (p.y + 0.5) * ch);
@@ -214,12 +197,6 @@ class LudoBoardPainter extends CustomPainter {
       
       // 3. Home Stretch (52-57)
        if (token.position >= 52) {
-           // .. Logic for home column ..
-           // Red: (1,7) -> (5,7)
-           // Green: (7,1) -> (7,5)
-           // Yellow: (13,7) -> (9,7)
-           // Blue: (7,13) -> (7,9)
-           
            int stepsIn = token.position - 51; // 1 to 5
            if (stepsIn > 5) stepsIn = 6; // Center
            
@@ -250,66 +227,6 @@ class LudoBoardPainter extends CustomPainter {
       int x = 1; 
       int y = 6; // Start for Red
 
-      // 12 Segments to form the loop
-      final segments = [
-        _PathSegment(1, 0, 5),   // Right 5
-        _PathSegment(1, -1, 1),  // Up-Right diag (virtual) -> actually just jump to (6,5)
-        _PathSegment(0, -1, 5),  // Up 5
-        _PathSegment(1, 0, 2),   // Right 2 (Top Turn)
-        _PathSegment(0, 1, 5),   // Down 5
-        _PathSegment(1, 1, 1),   // Down-Right diag -> jump to (9,6)
-        _PathSegment(1, 0, 5),   // Right 5
-        _PathSegment(0, 1, 2),   // Down 2 (Right Turn)
-        _PathSegment(-1, 0, 5),  // Left 5
-        _PathSegment(-1, 1, 1),  // Down-Left diag -> jump to (8,9)
-        _PathSegment(0, 1, 5),   // Down 5
-        _PathSegment(-1, 0, 2),  // Left 2 (Bottom Turn)
-        _PathSegment(0, -1, 5),  // Up 5
-        _PathSegment(-1, -1, 1), // Up-Left diag -> jump to (6,8)
-        _PathSegment(-1, 0, 5),  // Left 5
-        _PathSegment(0, -1, 2),  // Up 2 (Left Turn)
-      ];
-      
-      // My previous analysis:
-      // Seg 1: (1,6) -> (5,6) [Right, 5]
-      // Seg 2: (6,5) -> (6,0) [Up, 6]  <-- Wait, (6,5) is x+1, y-1 from (5,6).
-      
-      // Let's simplified specific points list or a cleaner generator.
-      // The user suggested: "move n steps in direction, turn, repeat".
-      
-      // Let's just hardcode the turns strictly.
-      
-      void addLine(int dx, int dy, int count) {
-          for(int i=0; i<count; i++) {
-              path.add(Point(x, y));
-              x += dx;
-              y += dy;
-          }
-      }
-      
-      // Red Start Arm
-      addLine(1, 0, 5); // (1,6) -> (5,6)
-      x = 6; y = 5;     // Jump diag
-      addLine(0, -1, 5); // (6,5) -> (6,1)
-      addLine(0, -1, 1); // (6,0) -> Extra step to top
-      
-      x = 7; y = 0; // Top Left Turn
-      addLine(1, 0, 1); // (7,0)
-      x = 8; y = 0; // Top Right
-      addLine(0, 1, 1); // (8,0) -> (8,1) ?? No.
-      
-      // Let's restart with the 4x13 approach the user mentioned.
-      // 13 cells per quadrant.
-      // Q1 (Red to Green transition):
-      // 5 Right, 6 Up, 2 Across? No.
-      
-      // Standard: 
-      // 5 horizontal, 1 diag-ish, 5 vertical. Top 3.
-      
-      // Reset logic.
-      path.clear();
-      x = 1; y = 6;
-      
       // 1. Red straight
       for(int i=0; i<5; i++) { path.add(Point(x++, y)); } // (1,6)..(5,6)
       
@@ -360,8 +277,6 @@ class LudoBoardPainter extends CustomPainter {
       return path;
   }
   
-
-  
   Color _getColor(LudoColor c) {
       switch(c) {
           case LudoColor.red: return Colors.red;
@@ -405,4 +320,3 @@ class LudoBoardPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant LudoBoardPainter oldDelegate) => true; // Always repaint for now
 }
-

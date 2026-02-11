@@ -33,7 +33,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     if (_hand.length >= maxHandSize) return;
 
     setState(() {
-      _hand.add(_draw());
+      _engine.drawCard(_ludo, _ludo.currentPlayer.color);
       _hoverIndex = null;
     });
   }
@@ -46,7 +46,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     setState(() {
       for (int i = 0; i < needed; i++) {
         if (_hand.length >= maxHandSize) break;
-        _hand.add(_draw());
+        _engine.drawCard(_ludo, _ludo.currentPlayer.color);
       }
       _hoverIndex = null;
     });
@@ -63,6 +63,10 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   final Set<int> _selectedDiceIndices = {}; // 0 for A, 1 for B
   String? _selectedTokenId;
   
+  // New Targeting State
+  LudoToken? _swapFirst;
+  LudoToken? _swapSecond;
+  
   int _visualA = 4;
   int _visualB = 4;
   final math.Random _rng = math.Random.secure(); // Secure random for better distribution
@@ -76,15 +80,40 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   static const double overlap = 42;
   static const double fanAngle = 0.22;
 
-  // Multi-Player Card State
-  final Map<LudoColor, List<_Card>> _drawPiles = {};
-  final Map<LudoColor, List<_Card>> _discardPiles = {};
-  final Map<LudoColor, List<_Card>> _hands = {};
+  // Multi-Player Card State (Old manual maps removed)
+  // New Engine-Authoritative State is in _ludo (sharedDrawPile, sharedDiscardPile, hands)
+
+  // Cache UI Models (Image assets etc) by Instance ID
+  final Map<String, _Card> _cardAssets = {};
 
   // Accessors for CURRENT player (to minimize refactor noise)
-  List<_Card> get _hand => _hands[_ludo.currentPlayer.color]!;
-  List<_Card> get _drawPile => _drawPiles[_ludo.currentPlayer.color]!;
-  List<_Card> get _discardPile => _discardPiles[_ludo.currentPlayer.color]!;
+  List<String> get _handIds => _ludo.hands[_ludo.currentPlayer.color]!;
+  List<_Card> get _hand => _handIds.map((id) => _getCard(id)).toList();
+  
+  // Helpers
+  _Card _getCard(String instanceId) {
+      if (_cardAssets.containsKey(instanceId)) return _cardAssets[instanceId]!;
+      
+      // Parse Template ID (Format: TEMPLATE_UUID)
+      final parts = instanceId.split('_');
+      final templateId = parts[0];
+      final template = CardLibrary.getById(templateId);
+      
+      if (template == null) {
+          // Fallback
+          return _Card(id: instanceId, templateId: "Unknown", title: "Unknown", type: _CardType.manipulation, imageAsset: "assets/cards/back.png");
+      }
+      
+      final card = _Card(
+          id: instanceId,
+          templateId: templateId,
+          title: template.name,
+          type: _mapEffectToVisualType(template.effectType), 
+          imageAsset: "assets/cards/${templateId}.png" // Assumes asset names match IDs
+      );
+      _cardAssets[instanceId] = card;
+      return card;
+  }
 
   @override
   void initState() {
@@ -98,44 +127,11 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     _engine = LudoRpgEngine();
     _ludo = LudoRpgGameState(players: _buildDefaultPlayers());
 
-    // Initialize Decks and Hands for ALL players
-    for (var color in LudoColor.values) {
-        _drawPiles[color] = _generateDeck();
-        _discardPiles[color] = [];
-        _hands[color] = [];
-        
-        // Initial Draw
-        for(int i=0; i<minHandSize; i++) {
-             _hands[color]!.add(_drawFromSpecific(color));
-        }
-    }
+    // Initialize Decks and Hands via Engine
+    _engine.initializeGame(_ludo);
   }
 
-  // Generate a full deck from the Library
-  List<_Card> _generateDeck() {
-      List<_Card> deck = [];
-      // Flatten library into a deck list
-      // For MVP, add 1 copy of every card? Or duplicates?
-      // Let's add 2 copies of standard cards, 1 of legendary/rare.
-      // Or just 1 of each for now (35 cards is a good deck size).
-      
-      for (var template in CardLibrary.allCards) {
-          // Determine copies (Maybe library has 'rarity' later)
-          // For now, 1 copy of each.
-          final card = _Card(
-              id: "${template.id}_${math.Random().nextInt(10000)}", 
-              templateId: template.id,
-              title: template.name,
-              // Map effect type to visual type?
-              type: _mapEffectToVisualType(template.effectType), 
-              imageAsset: "assets/cards/${template.id}.png"
-          );
-          deck.add(card);
-      }
-      
-      deck.shuffle();
-      return deck;
-  }
+  // Obsolete _generateDeck removed.
   
   _CardType _mapEffectToVisualType(CardEffectType type) {
       if (type.toString().contains("Attack") || type == CardEffectType.laser) return _CardType.attack;
@@ -144,15 +140,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       return _CardType.manipulation;
   }
   
-  // Helper to draw for specific color (used during init)
-  _Card _drawFromSpecific(LudoColor c) {
-      if (_drawPiles[c]!.isEmpty) {
-          _drawPiles[c]!.addAll(_discardPiles[c]!);
-          _discardPiles[c]!.clear();
-          _drawPiles[c]!.shuffle();
-      }
-      return _drawPiles[c]!.removeLast();
-  }
+  // Obsolete _drawFromSpecific removed.
 
   List<LudoPlayer> _buildDefaultPlayers() {
     List<LudoToken> mkTokens(LudoColor c) => List.generate(
@@ -172,8 +160,8 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   void _toggleDiceSelection(int index) {
       if (_ludo.phase != TurnPhase.awaitAction) return; 
       // Validate: Can't select used dice
-      if (index == 0 && (_ludo.dice.aUsed || _ludo.dice.a == null)) return;
-      if (index == 1 && (_ludo.dice.bUsed || _ludo.dice.b == null)) return;
+      if (index == 0 && (_ludo.dice.a?.used ?? true)) return;
+      if (index == 1 && (_ludo.dice.b?.used ?? true)) return;
 
       setState(() {
           if (_selectedDiceIndices.contains(index)) {
@@ -217,8 +205,8 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       // This ensures the dice "lands" on the correct number and stays there during the long 'settle' delay
       if (!mounted) return;
       setState(() {
-          _visualA = _ludo.dice.a!;
-          _visualB = _ludo.dice.b!;
+          _visualA = _ludo.dice.a!.value;
+          _visualB = _ludo.dice.b!.value;
       });
       await Future.delayed(Duration(milliseconds: delays.last));
       
@@ -227,6 +215,39 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       setState(() {
           _isRolling = false;
       });
+  }
+
+  void _syncDiceVisuals() {
+    if (_ludo.dice.a != null) _visualA = _ludo.dice.a!.value;
+    if (_ludo.dice.b != null) _visualB = _ludo.dice.b!.value;
+  }
+
+  Future<int?> _pickDieToDouble() async {
+      // Only allow choosing dice that exist and are unused
+      final aOk = _ludo.dice.a != null && !_ludo.dice.a!.used;
+      final bOk = _ludo.dice.b != null && !_ludo.dice.b!.used;
+
+      return showDialog<int>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text("Double which die?"),
+          content: const Text("Choose the die to double."),
+          actions: [
+            TextButton(
+              onPressed: aOk ? () => Navigator.pop(context, 0) : null,
+              child: const Text("Die A"),
+            ),
+            TextButton(
+              onPressed: bOk ? () => Navigator.pop(context, 1) : null,
+              child: const Text("Die B"),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, null),
+              child: const Text("Cancel"),
+            ),
+          ],
+        ),
+      );
   }
   
   // Debug: simple tap handler for board to test spawn/move?
@@ -273,25 +294,149 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   // Accessors handle the logic, no change needed to _draw() 
   // EXCEPT verify it refers to the getters correctly. 
   // Since I kept the names _hand, _drawPile, _discardPile, existing code works!
-  _Card _draw() {
-    // Uses getters for CURRENT player
-    if (_drawPile.isEmpty) {
-      _drawPile.addAll(_discardPile);
-      _discardPile.clear();
-      _drawPile.shuffle();
-    }
-    return _drawPile.removeLast();
-  }
+  // _draw() removed; use _engine.drawCard() instead
 
-  void _handleTokenTap(LudoToken token) {
+  Future<void> _handleTokenTap(LudoToken token) async {
       if (_ludo.phase == TurnPhase.ended) return; 
-      if (token.color != _ludo.currentPlayer.color) return;
+      
+      // Allow opponent selection ONLY in targeting phase
+      if (_ludo.phase != TurnPhase.selectingTarget && token.color != _ludo.currentPlayer.color) return;
+
+      // Check for Target Selection Resolution
+      if (_ludo.phase == TurnPhase.selectingTarget) {
+          final cardId = _ludo.activeCardId;
+          final handIndex = _pendingCardHandIndex;
+          if (cardId == null || handIndex == null) return;
+
+          final template = CardLibrary.getById(cardId);
+          if (template == null) return;
+          
+          // SPECIAL: Swap Mechanic (Select 2 targets)
+          if (template.effectType == CardEffectType.swapPos) {
+              if (_swapFirst == null) {
+                  // 1. Select First Token
+                  setState(() => _swapFirst = token);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Select second token to swap with..."), duration: Duration(milliseconds: 1000)));
+                  return;
+              } else if (_swapSecond == null) {
+                  // 2. Select Second Token
+                  // Prevent selecting same token
+                  if (token.id == _swapFirst!.id) return;
+                  
+                  setState(() => _swapSecond = token);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Tap AGAIN to confirm swap..."), duration: Duration(milliseconds: 1000)));
+                  return; 
+              } else {
+                  // 3. Confirm (Must tap second token again)
+                  if (token.id != _swapSecond!.id) {
+                      // Changed mind? Select as new second?
+                      setState(() => _swapSecond = token);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Tap AGAIN to confirm swap..."), duration: Duration(milliseconds: 1000)));
+                      return;
+                  }
+                  
+                  // EXECUTE SWAP
+                  final res = _engine.playCard(gs: _ludo, card: template, target: [_swapFirst!, _swapSecond!]);
+                  
+                  setState(() {
+                      _ludo.phase = TurnPhase.awaitAction;
+                      _ludo.activeCardId = null;
+                      _pendingCardHandIndex = null;
+                      _swapFirst = null;
+                      _swapSecond = null;
+                  });
+                  
+                  if (res.success) {
+                      await _discardCard(handIndex); // discardCard is async
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Swapped positions!"), duration: const Duration(milliseconds: 800)));
+                  } else {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Swap failed!"), duration: const Duration(milliseconds: 800)));
+                  }
+                  return;
+              }
+          }
+          
+          // SPECIAL: Teleport (Target -> Distance)
+          if (template.effectType == CardEffectType.teleport) {
+              if (token.color != _ludo.currentPlayer.color) {
+                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Must teleport YOUR token!"), duration: Duration(milliseconds: 800)));
+                   return;
+              }
+              
+              // 1. Show Dialog
+              final distance = await showDialog<int?>(
+                  context: context,
+                  builder: (context) => const _TeleportDialog(),
+              );
+              
+              if (distance == null) return; // Cancelled
+              
+              // 2. Execute
+              final res = _engine.playCard(
+                  gs: _ludo, 
+                  card: template, 
+                  target: token, 
+                  overrideValue: distance
+              );
+              
+              setState(() {
+                _ludo.phase = TurnPhase.awaitAction;
+                _ludo.activeCardId = null;
+                _pendingCardHandIndex = null;
+                 // Clear any temp state if needed
+              });
+
+              if (res.success) {
+                await _discardCard(handIndex);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Teleported $distance tiles!"), duration: const Duration(milliseconds: 800)));
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(res.message ?? "Teleport failed."), duration: const Duration(milliseconds: 800)),
+                );
+              }
+              return;
+          }
+
+          // Normal Single Target Logic
+          // Check if targeting opponent is allowed/required
+          if (template.targetType == TargetType.tokenEnemy && token.color == _ludo.currentPlayer.color) {
+               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Must select an Enemy token!"), duration: Duration(milliseconds: 800)));
+               return;
+          }
+          if (template.targetType == TargetType.tokenSelf && token.color != _ludo.currentPlayer.color) {
+               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Must select YOUR token!"), duration: Duration(milliseconds: 800)));
+               return;
+          }
+
+          // Attempt to play card on this token target
+          final res = _engine.playCard(gs: _ludo, card: template, target: token);
+          
+          setState(() {
+            _ludo.phase = TurnPhase.awaitAction;
+            _ludo.activeCardId = null;
+            _pendingCardHandIndex = null;
+          });
+
+          if (res.success) {
+            _discardCard(handIndex);
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Played ${template.name}!"), duration: const Duration(milliseconds: 800)));
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(res.message ?? "Card failed (invalid target/state)."), duration: const Duration(milliseconds: 800)),
+            );
+          }
+          return;
+      }
 
       // 1. Try Spawn (Priority, allowed in awaitRoll too)
       if (token.isInBase) {
            setState(() {
-               _engine.spawnFromBase(_ludo, token);
-               _selectedTokenId = null; // Clear any pending selection
+               var res = _engine.spawnFromBase(_ludo, token);
+               if (res.success) {
+                  _selectedTokenId = null; 
+               } else {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Spawn failed"), duration: const Duration(milliseconds: 800)));
+               }
            });
            return;
       } 
@@ -321,21 +466,21 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
           bool useB = _selectedDiceIndices.contains(1);
 
           setState(() {
-              bool success = _engine.moveToken(gs: _ludo, token: token, useA: useA, useB: useB);
-              if (success) {
+              var result = _engine.moveToken(gs: _ludo, token: token, useA: useA, useB: useB);
+              if (result.success) {
                   // Move successful!
                   _selectedTokenId = null;
                   _selectedDiceIndices.clear();
                   
-                  // Check if turn should end? 
-                  // Engine doesn't auto-end.
-                  // Keep it manual or auto? 
-                  // User likes manual End Turn usually, but let's see.
-                  // If no dice left, maybe show End Turn button prominent?
-                  // End Turn button is visible if phase==awaitAction.
+                  if (result.events.contains("TOKEN_KILLED")) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Enemy Token Killed!"), backgroundColor: Colors.redAccent));
+                  } else if (result.events.contains("TOKEN_FINISHED")) {
+                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Token Finished!"), backgroundColor: Colors.amber));
+                  }
+
               } else {
                    ScaffoldMessenger.of(context).showSnackBar(
-                       const SnackBar(content: Text("Invalid Move! Check dice or path."), duration: Duration(milliseconds: 800))
+                       SnackBar(content: Text(result.message ?? "Invalid Move!"), duration: const Duration(milliseconds: 800))
                    );
               }
           });
@@ -357,14 +502,11 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   }
 
   Future<void> _discardCard(int index) async {
-      // Logic from old _handleCardTap
       if (_isBusy) return; 
-      // Need LudoColor. Is it always current player?
-      // Yes, because we only discard our own cards.
       final color = _ludo.currentPlayer.color;
-      final hand = _hands[color]!;
+      final handIds = _ludo.hands[color]!;
       
-      if (index < 0 || index >= hand.length) return;
+      if (index < 0 || index >= handIds.length) return;
 
       setState(() {
         _isBusy = true;
@@ -377,10 +519,10 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
       await Future.delayed(animDuration);
 
+      final cardId = handIds[index];
+
       setState(() {
-        final old = hand[index];
-        _discardPiles[color]!.add(old);
-        hand.removeAt(index);
+        _engine.discardCard(_ludo, color, cardId); // Engine handles logic
         _isDiscarding = false;
         _hoverIndex = null;
       });
@@ -393,7 +535,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       });
   }
 
-  void _handleCardTap(int index, LudoColor color) {
+  Future<void> _handleCardTap(int index, LudoColor color) async {
     if (_isBusy || _ludo.phase == TurnPhase.ended) return;
     if (_ludo.currentPlayer.color != color) return; // Not your hand
     
@@ -417,12 +559,145 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     final template = CardLibrary.getById(cardData.templateId);
     if (template == null) return;
 
-    if (template.targetType == TargetType.none) {
+    if (template.effectType == CardEffectType.doubleDie) {
+         if (_ludo.phase != TurnPhase.awaitAction) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Roll dice before using Double It.")));
+            return;
+         }
+         
+         final pick = await _pickDieToDouble();
+         if (pick == null) return;
+         
+         final res = _engine.playCard(gs: _ludo, card: template, dieIndex: pick);
+         if (res.success) {
+             await _discardCard(index);
+             setState(() {
+                 _syncDiceVisuals();
+                 _selectedDiceIndices.clear();
+                 _selectedTokenId = null;
+             });
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Played ${template.name}!"), duration: const Duration(milliseconds: 800)));
+         } else {
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Failed to double die."), duration: const Duration(milliseconds: 800)));
+         }
+
+    } else if (template.effectType == CardEffectType.doubleBoth) {
+         if (_ludo.phase != TurnPhase.awaitAction) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Roll dice before using Double It 2x.")));
+            return;
+         }
+         
+         final res = _engine.playCard(gs: _ludo, card: template);
+         if (res.success) {
+             await _discardCard(index);
+             setState(() {
+                 _syncDiceVisuals();
+                 _selectedDiceIndices.clear();
+                 _selectedTokenId = null;
+             });
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Applied Double Both!"), duration: const Duration(milliseconds: 800)));
+         } else {
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Failed to double dice."), duration: const Duration(milliseconds: 800)));
+         }
+         
+    } else if (template.effectType == CardEffectType.reroll) {
+         if (_ludo.phase != TurnPhase.awaitAction) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Roll dice first.")));
+            return;
+         }
+
+         // Single Reroll requires picking a die
+         final pick = await _pickDieToDouble(); // Reuse picker (A/B)
+         if (pick == null) return;
+
+         final res = _engine.playCard(gs: _ludo, card: template, dieIndex: pick);
+         if (res.success) {
+             await _discardCard(index);
+             setState(() {
+                 _syncDiceVisuals();
+                 _selectedDiceIndices.clear();
+                 _selectedTokenId = null;
+             });
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Rerolled Die!"), duration: const Duration(milliseconds: 800)));
+         } else {
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Reroll failed."), duration: const Duration(milliseconds: 800)));
+         }
+
+    } else if (template.effectType == CardEffectType.reroll2x) {
+         if (_ludo.phase != TurnPhase.awaitAction) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Roll dice first.")));
+            return;
+         }
+
+         final res = _engine.playCard(gs: _ludo, card: template);
+         if (res.success) {
+             await _discardCard(index);
+             setState(() {
+                 _syncDiceVisuals();
+                 _selectedDiceIndices.clear();
+                 _selectedTokenId = null;
+             });
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Rerolled Both!"), duration: const Duration(milliseconds: 800)));
+         } else {
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Reroll failed."), duration: const Duration(milliseconds: 800)));
+         }
+
+    } else if (template.targetType == TargetType.none) {
         // Instant Cast
-        bool success = _engine.playCard(gs: _ludo, card: template, target: null);
-        if (success) {
+        var res = _engine.playCard(gs: _ludo, card: template, target: null);
+        
+        // Handle Pending Choice (e.g. Dumpster Dive)
+        if (res.success && res.choice != null) {
+             if (res.choice!.type == PendingChoiceType.dumpsterPickOne) {
+                 final options = res.choice!.options.map((id) => _getCard(id)).toList(); // _getCard caches
+                 
+                 // Show Dialog
+                 final pickedId = await showDialog<String>(
+                     context: context, 
+                     barrierDismissible: false,
+                     builder: (_) => _DumpsterDialog(options: options)
+                 );
+                 
+                 if (pickedId != null) {
+                     final resolveRes = _engine.resolveChoice(_ludo, pickedId);
+                     if (resolveRes.success) {
+                         // Discard the Dumpster Dive card (consumes action)
+                         await _discardCard(index); 
+                         setState(() {
+                             _ludo.activeCardId = null;
+                             _pendingCardHandIndex = null;
+                         });
+                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Card Recovered!"), duration: Duration(milliseconds: 800)));
+                     } else {
+                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(resolveRes.message ?? "Failed to recover.")));
+                     }
+                 } else {
+                     // Cancelled -> Revert?
+                     // Ideally we revert the 'needsChoice' state. 
+                     // For MVP, if they cancel, we just reset pendingChoice and do nothing (card stays in hand).
+                     setState(() {
+                         _ludo.pendingChoice = null; 
+                         _ludo.activeCardId = null;
+                         _pendingCardHandIndex = null;
+                     });
+                 }
+             }
+             return;
+        }
+
+        if (res.success) {
             _discardCard(index);
+            // Clear selections on success (especially for Restart Turn)
+            setState(() {
+                _syncDiceVisuals(); // Sync in case of Modify Roll
+                _selectedDiceIndices.clear();
+                _selectedTokenId = null;
+                _visualA = 4;
+                _visualB = 4;
+            });
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Played ${template.name}!"), duration: const Duration(milliseconds: 800)));
+        } else {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Failed to play card"), duration: const Duration(milliseconds: 800)));
         }
     } else {
         // Requires Target
@@ -442,7 +717,9 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _getBackgroundColor(_ludo.currentPlayer.color),
-      body: SafeArea(
+      body: Stack(
+        children: [
+          SafeArea(
         child: Column(
           children: [
             // 1. Top Area: Decks + Board
@@ -470,10 +747,10 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                 SizedBox(
                                    width: pileW, 
                                    height: 150, 
-                                   child: Center(
+                                    child: Center(
                                       child: GestureDetector(
                                         onTap: _drawOneToHand,
-                                        child: _PileWidget(label: 'Draw', count: _drawPile.length, isDiscard: false),
+                                        child: _PileWidget(label: 'Draw', count: _ludo.sharedDrawPile.length, isDiscard: false),
                                       )
                                    )
                                 ),
@@ -522,7 +799,8 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                                            if (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) _rollDice();
                                                            else if (_ludo.phase == TurnPhase.awaitAction) _toggleDiceSelection(0);
                                                        },
-                                                       color: _ludo.dice.aUsed ? Colors.grey : null,
+                                                       color: (_ludo.dice.a?.used ?? false) ? Colors.grey : null,
+                                                       isDoubled: _ludo.dice.a?.doubled ?? false,
                                                      ),
                                                    )
                                                 ),
@@ -541,7 +819,8 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                                            if (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) _rollDice();
                                                            else if (_ludo.phase == TurnPhase.awaitAction) _toggleDiceSelection(1);
                                                        },
-                                                       color: _ludo.dice.bUsed ? Colors.grey : null,
+                                                       color: (_ludo.dice.b?.used ?? false) ? Colors.grey : null,
+                                                       isDoubled: _ludo.dice.b?.doubled ?? false,
                                                      ),
                                                    )
                                                 ),
@@ -611,7 +890,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                                     duration: const Duration(milliseconds: 200),
                                                     child: _PileWidget(
                                                         label: 'Discard', 
-                                                        count: _discardPile.length, 
+                                                        count: _ludo.sharedDiscardPile.length, 
                                                         isDiscard: true
                                                     ),
                                                 );
@@ -668,7 +947,44 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
           ],
         ),
       ),
-    );
+      
+      // Victory Overlay
+      if (_ludo.winner != null)
+        Container(
+          color: Colors.black87,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  "${_ludo.winner.toString().split('.').last.toUpperCase()} WINS!",
+                  style: const TextStyle(
+                    fontSize: 48,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFFFFD700), // Gold
+                    shadows: [Shadow(blurRadius: 10, color: Colors.white)],
+                  ),
+                ),
+                const SizedBox(height: 30),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+                    backgroundColor: Colors.white,
+                  ),
+                  onPressed: () {
+                     setState(() {
+                         _engine.resetGame(_ludo);
+                     });
+                  },
+                  child: const Text("PLAY AGAIN", style: TextStyle(fontSize: 20, color: Colors.black)),
+                )
+              ],
+            ),
+          ),
+        ),
+     ],
+    ),
+   );
   }
 
   Widget _buildTutorialHint() {
@@ -690,7 +1006,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
           } else if (_selectedDiceIndices.isNotEmpty && _selectedTokenId == null) {
                text = "Tap Pawn to Select";
           } else if (_selectedDiceIndices.isEmpty) {
-               if (_ludo.dice.aUsed || _ludo.dice.bUsed) {
+               if ((_ludo.dice.a?.used ?? false) || (_ludo.dice.b?.used ?? false)) {
                    text = "Select Dice or End Turn";
                } else {
                    text = "Tap Dice to Select";
@@ -1188,3 +1504,48 @@ class _TeleportDialogState extends State<_TeleportDialog> {
 }
 
 
+class _DumpsterDialog extends StatelessWidget {
+  final List<_Card> options;
+
+  const _DumpsterDialog({required this.options});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E2630),
+      title: const Text("Pick a Card to Recover", style: TextStyle(color: Colors.white)),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 200, // Adjust height as needed
+        child: options.isEmpty 
+            ? const Center(child: Text("No cards found.", style: TextStyle(color: Colors.white54)))
+            : SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: options.map((card) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                      child: GestureDetector(
+                        onTap: () => Navigator.pop(context, card.id),
+                        child: Column(
+                          children: [
+                             _CardWidget(card: card),
+                             const SizedBox(height: 8),
+                             Text(card.title, style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text("Cancel"),
+        ),
+      ],
+    );
+  }
+}

@@ -14,8 +14,10 @@ enum CardEffectType {
   // --- Dice Modifiers ---
   modifyRoll,       // +X to roll
   setRoll,          // Force roll to X (or max)
-  doubleRoll,       // x2
-  reroll,           // Rolling again
+  doubleDie,        // Double single die (requires choice)
+  doubleBoth,       // Double both dice
+  reroll,           // Rolling again (Single)
+  reroll2x,         // Rolling again (Both)
 
   // --- Board / Hand Ops ---
   stealCard, 
@@ -27,6 +29,7 @@ enum CardEffectType {
   // --- Turn Ops ---
   skipTurn,         // Stun/Skip target
   extraTurn,        // Sands of Time
+  restartTurnNow,   // Immediate turn restart
 
   // --- Movement ---
   teleport,         // Move to specific tile (0-51) or relative

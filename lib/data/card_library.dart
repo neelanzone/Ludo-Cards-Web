@@ -7,7 +7,7 @@ class CardLibrary {
       id: 'Board02', 
       name: 'Double It', 
       description: 'Double any one of your dice rolls',
-      effectType: CardEffectType.doubleRoll, 
+      effectType: CardEffectType.doubleDie, 
       value: 1, // 1 die
       targetType: TargetType.none,
     ),
@@ -15,7 +15,7 @@ class CardLibrary {
       id: 'Board01', 
       name: 'Double It 2x', 
       description: 'Double both of your dice rolls',
-      effectType: CardEffectType.doubleRoll, 
+      effectType: CardEffectType.doubleBoth, 
       value: 2, // both dice
       targetType: TargetType.none,
     ),
@@ -81,7 +81,7 @@ class CardLibrary {
       id: 'Board06', 
       name: 'Sands of Time', 
       description: 'Take your next turn immediately',
-      effectType: CardEffectType.extraTurn, 
+      effectType: CardEffectType.restartTurnNow, 
       targetType: TargetType.none,
     ),
     CardTemplate(

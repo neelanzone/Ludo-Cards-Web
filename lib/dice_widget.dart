@@ -9,6 +9,7 @@ class DiceWidget extends StatelessWidget {
   final double size;
   final bool isSelected;
   final Color? color;
+  final bool isDoubled;
 
   const DiceWidget({
     super.key,
@@ -18,13 +19,16 @@ class DiceWidget extends StatelessWidget {
     this.color,
     this.size = 60.0,
     this.isSelected = false,
+    this.isDoubled = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: isEnabled ? onTap : null,
-      child: AnimatedContainer(
+    // If value > 6, we show Number instead of Pips
+    final bool showNumber = value > 6;
+    
+    // Core Dice Visual
+    Widget diceBody = AnimatedContainer(
         duration: const Duration(milliseconds: 100),
         width: size,
         height: size,
@@ -39,9 +43,55 @@ class DiceWidget extends StatelessWidget {
                   : []),
         ),
         child: CustomPaint(
-          painter: _DicePainter(value, color ?? Colors.white),
+          painter: _DicePainter(value, color ?? Colors.white, showNumber),
+          child: showNumber 
+             ? Center(
+                  child: Text(
+                    "$value",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: size * 0.45,
+                      fontFamily: "Helvetica Neue",
+                      color: ((color ?? Colors.white).computeLuminance() > 0.5)
+                          ? Colors.black87
+                          : Colors.white,
+                    ),
+                  ),
+               )
+             : null,
         ),
-      ),
+      );
+
+    // Add Stack for Badge if doubled
+    if (isDoubled) {
+        diceBody = Stack(
+            clipBehavior: Clip.none,
+            children: [
+                diceBody,
+                Positioned(
+                    top: -8,
+                    right: -8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.amber,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.white, width: 1.5),
+                        boxShadow: const [BoxShadow(blurRadius: 4, color: Colors.black45)],
+                      ),
+                      child: const Text(
+                        "2×",
+                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 10, color: Colors.black),
+                      ),
+                    ),
+                ),
+            ],
+        );
+    }
+
+    return GestureDetector(
+      onTap: isEnabled ? onTap : null,
+      child: diceBody,
     );
   }
 }
@@ -49,8 +99,9 @@ class DiceWidget extends StatelessWidget {
 class _DicePainter extends CustomPainter {
   final int value;
   final Color baseColor;
+  final bool showNumber;
 
-  _DicePainter(this.value, this.baseColor);
+  _DicePainter(this.value, this.baseColor, this.showNumber);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -77,39 +128,36 @@ class _DicePainter extends CustomPainter {
         Paint()..color = Colors.white30..style = PaintingStyle.stroke..strokeWidth = 1
     );
 
-    // 3. Pips (Dots)
-    // Grid: 
-    // Col 1: 0.25w   Col 2: 0.5w   Col 3: 0.75w
-    // Row 1: 0.25h   Row 2: 0.5h   Row 3: 0.75h
+    // 3. Pips (Dots) - ONLY if <= 6 (showNumber is false)
+    if (!showNumber) {
+        final double pipRadius = size.width * 0.09;
+        final Paint pipPaint = Paint()
+            ..color = (baseColor.computeLuminance() > 0.5) ? Colors.black87 : Colors.white
+            ..style = PaintingStyle.fill;
     
-    final double pipRadius = size.width * 0.09;
-    final Paint pipPaint = Paint()
-        ..color = (baseColor.computeLuminance() > 0.5) ? Colors.black87 : Colors.white
-        ..style = PaintingStyle.fill;
-
-    // Helper to draw pip at normalized coordinates
-    void drawPip(double nx, double ny) {
-       canvas.drawCircle(Offset(size.width * nx, size.height * ny), pipRadius, pipPaint);
-    }
-    
-    // Logic for 1-6
-    if (value % 2 != 0) {
-       drawPip(0.5, 0.5); // Center (1, 3, 5)
-    }
-    
-    if (value > 1) {
-       drawPip(0.2, 0.2); // TL
-       drawPip(0.8, 0.8); // BR
-    }
-    
-    if (value > 3) {
-       drawPip(0.8, 0.2); // TR
-       drawPip(0.2, 0.8); // BL
-    }
-    
-    if (value == 6) {
-       drawPip(0.2, 0.5); // Left-Mid
-       drawPip(0.8, 0.5); // Right-Mid
+        void drawPip(double nx, double ny) {
+           canvas.drawCircle(Offset(size.width * nx, size.height * ny), pipRadius, pipPaint);
+        }
+        
+        // Logic for 1-6
+        if (value % 2 != 0) {
+           drawPip(0.5, 0.5); // Center (1, 3, 5)
+        }
+        
+        if (value > 1) {
+           drawPip(0.2, 0.2); // TL
+           drawPip(0.8, 0.8); // BR
+        }
+        
+        if (value > 3) {
+           drawPip(0.8, 0.2); // TR
+           drawPip(0.2, 0.8); // BL
+        }
+        
+        if (value == 6) {
+           drawPip(0.2, 0.5); // Left-Mid
+           drawPip(0.8, 0.5); // Right-Mid
+        }
     }
   }
   

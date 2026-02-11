@@ -18,6 +18,7 @@ class LudoBoard extends StatefulWidget {
   final Function(LudoToken)? onTokenTap;
   final LudoColor activeColor; 
   final String? selectedTokenId; // Highlight this token
+  final List<int>? highlightAbsMain; // Highlight these main-track indices
 
   const LudoBoard({
     super.key, 
@@ -26,6 +27,7 @@ class LudoBoard extends StatefulWidget {
     required this.activeColor,
     this.onTokenTap,
     this.selectedTokenId,
+    this.highlightAbsMain,
   });
 
   @override
@@ -99,7 +101,6 @@ class _LudoBoardState extends State<LudoBoard> {
     // Yellow (Bottom-Right) -> Needs -0.75 turn.
     
 
-
     // Fix for Yellow (-0.75) -> Blue (0) long spin:
     // This simple logic will spin back 270 degrees.
     // For MVP, straightforward implementation is acceptable.
@@ -131,6 +132,7 @@ class _LudoBoardState extends State<LudoBoard> {
                       activeColor: widget.activeColor,
                       boardImage: _boardImage,
                       selectedTokenId: widget.selectedTokenId,
+                      highlightAbsMain: widget.highlightAbsMain,
                   ),
                 ),
               ),
@@ -210,7 +212,7 @@ class _LudoBoardState extends State<LudoBoard> {
       }
       
       if (token.isOnMain) {
-          int absPos = engine.toAbsoluteMainIndex(token);
+          int absPos = engine.toAbsoluteMainIndexFromRelative(token);
           List<Offset> path = BoardLayout.getLegacyPath(); 
           if (absPos < path.length) {
               Offset norm = path[absPos];
@@ -246,6 +248,7 @@ class LudoBoardPainter extends CustomPainter {
   final LudoColor activeColor;
   final ui.Image? boardImage;
   final String? selectedTokenId;
+  final List<int>? highlightAbsMain;
 
   LudoBoardPainter({
     required this.players, 
@@ -253,6 +256,7 @@ class LudoBoardPainter extends CustomPainter {
     required this.activeColor,
     this.boardImage,
     this.selectedTokenId,
+    this.highlightAbsMain,
   });
 
   @override
@@ -282,6 +286,9 @@ class LudoBoardPainter extends CustomPainter {
     }
 
     // _drawStars(canvas, cellW, cellH); // Removed as requested
+    if (highlightAbsMain != null) {
+        _drawHighlights(canvas, cellW, cellH);
+    }
     _drawTokensSmart(canvas, cellW, cellH);
 
     canvas.restore();
@@ -305,6 +312,31 @@ class LudoBoardPainter extends CustomPainter {
       canvas.drawRect(Rect.fromLTWH(9*cw,9*cw,6*cw,6*ch), baseP); 
   }
 
+  void _drawHighlights(Canvas canvas, double cw, double ch) {
+      if (highlightAbsMain == null) return;
+      
+      final path = BoardLayout.getLegacyPath();
+      final p = Paint()
+        ..color = Colors.cyan.withOpacity(0.4)
+        ..style = PaintingStyle.fill;
+      final border = Paint()
+        ..color = Colors.cyan
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke;
+      
+      double boardW = cw * 15;
+      double boardH = ch * 15;
+      
+      for (int abs in highlightAbsMain!) {
+          if (abs < 0 || abs >= path.length) continue;
+          Offset norm = path[abs];
+          Offset pos = Offset(norm.dx * boardW, norm.dy * boardH);
+          
+          canvas.drawCircle(pos + Offset(cw/2, ch/2), cw * 0.4, p);
+          canvas.drawCircle(pos + Offset(cw/2, ch/2), cw * 0.4, border);
+      }
+  }
+
   void _drawTokensSmart(Canvas canvas, double cw, double ch) {
       final Map<String, List<LudoToken>> stackGroups = {};
 
@@ -320,7 +352,7 @@ class LudoBoardPainter extends CustomPainter {
                   } else if (token.isInHomeStretch) {
                       key = "HS_${token.color.name}_${token.position}";
                   } else {
-                      int abs = engine.toAbsoluteMainIndex(token);
+                      int abs = engine.toAbsoluteMainIndexFromRelative(token);
                       key = "M_$abs";
                   }
                   stackGroups.putIfAbsent(key, () => []).add(token);
@@ -403,7 +435,7 @@ class LudoBoardPainter extends CustomPainter {
       }
       
       if (token.isOnMain) {
-          int absPos = engine.toAbsoluteMainIndex(token);
+          int absPos = engine.toAbsoluteMainIndexFromRelative(token);
           List<Offset> path = BoardLayout.getLegacyPath();
           if (absPos >= path.length) return null;
           Offset norm = path[absPos];

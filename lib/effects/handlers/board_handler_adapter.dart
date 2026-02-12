@@ -2,7 +2,7 @@ import '../../models.dart';
 import '../../ludo_rpg_engine.dart';
 import '../effect_types.dart';
 
-EffectResult dumpsterDiveHandler({
+EffectResult boardCardAdapter({
   required LudoRpgGameState gs,
   required LudoRpgEngineApi api,
   required CardTemplate card,
@@ -11,10 +11,9 @@ EffectResult dumpsterDiveHandler({
   int? dieIndex,
 }) {
   if (api is LudoRpgEngine) {
-      // "Board09" is the Dumpster Dive card ID as per spec
-      final res = api.playBoardCard(gs, "Board09"); 
+      final res = api.playBoardCard(gs, card.id);
       if (res.success) {
-          return EffectResult.ok(pending: res.pending, consumesAction: false); // playBoardCard handles action consumption or pending
+          return EffectResult.ok(pending: res.pending, consumesAction: false); // pending handles action consumption or waits
       } else {
           return EffectResult.fail(res.message ?? "Failed");
       }

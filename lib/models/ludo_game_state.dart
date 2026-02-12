@@ -12,25 +12,59 @@ enum TurnPhase {
   awaitAction, // move/spawn
   selectingTarget, // <--- NEW: Card targeting
   resolvingChoice, // <--- NEW: Generic choice resolution (Dumpster Dive etc)
+  pandemicSurvival, // <--- NEW: Survival roll phase
   gameOver,
   ended, // Maybe merge with gameOver? 'ended' was used for... turn ended? 
          // Actually 'ended' isn't explicitly used much in my code except _handleTokenTap check.
          // Let's keep 'ended' for turn end and add 'gameOver' for match end.
 }
 
-enum PendingChoiceType {
+enum PendingType {
   none,
-  dumpsterPickOne,
+
+  // Dice
+  pickDieToDouble,
+  pickDieToReroll,
+  confirmRerollChoiceSingle,
+  confirmRerollChoiceBoth,
+
+  // Player selection
+  pickPlayer,
+
+  // Hand selection
+  pickCardFromOpponentHand,
+  pickCardFromYourHand,
+
+  // Robin Hood redistribution
+  robinPickCard,        // select a card from stolen pool
+  robinPickRecipient,   // select recipient color
+
+  // Dumpster Dive
+  dumpsterBrowsePick,   // choose card before timer ends
+
+  // Token selection
+  pickToken1,
+  pickToken2,
+
+  // Attack/Defence
+  selectResurrectTarget,
+  pickAttackerToken,
+  pickAttackDirection,
+  pickAttackTarget,
+  selectAttackTarget, // Alias for pickAttackTarget (legacy/refactor mixup fix)
+  
+
+
 }
 
-class PendingChoice {
-  final PendingChoiceType type;
-  final String sourceCardId; // the card being played, e.g. "DumpsterDive"
-  final List<String> options; // e.g. 5 discard card instance IDs
-  const PendingChoice({
+class PendingInteraction {
+  final PendingType type;
+  final String sourceCardId; // e.g. "Board02"
+  final Map<String, dynamic> data; // payload
+  const PendingInteraction({
     required this.type,
-    this.sourceCardId = "", // Default empty string or make optional in test
-    required this.options,
+    required this.sourceCardId,
+    this.data = const {},
   });
 }
 
@@ -41,11 +75,27 @@ class DieState {
   // UI/Rules metadata
   bool doubled;     // show 2× badge (or d12)
   int multiplier;   // 1 or 2 (future-proof)
+  bool showD12;     // UI flag for d12 display
+  int? prevValue;   // For reroll "keep old/new" logic
+  int bonus;        // +4 / +6 etc
 
   DieState(this.value)
       : used = false,
         doubled = false,
-        multiplier = 1;
+        multiplier = 1,
+        showD12 = false,
+        bonus = 0;
+
+  int get effectiveValue => (value * multiplier) + bonus;
+        
+  // Reset modifiers
+  void clearModifiers() {
+      doubled = false;
+      multiplier = 1;
+      showD12 = false;
+      prevValue = null;
+      bonus = 0;
+  }
 }
 
 class DicePair {
@@ -60,6 +110,10 @@ class DicePair {
   
   bool get bothUnused => rolled && !aUsed && !bUsed;
   bool get anyUnused => rolled && (!aUsed || !bUsed);
+
+  // Effective values
+  int get aEff => a?.effectiveValue ?? 0;
+  int get bEff => b?.effectiveValue ?? 0;
 
   void reset() {
     a = null;
@@ -96,7 +150,15 @@ class LudoRpgGameState {
   final List<String> sharedDiscardPile = [];
   final Map<LudoColor, List<String>> hands = {}; 
   
-  PendingChoice? pendingChoice;
+  PendingInteraction? pending; // <--- The new pending system
+  
+  // Toast / Notification System
+  final List<String> toastQueue = [];
+  void toast(String msg) => toastQueue.add(msg);
+  
+  // Mimic State
+  String? lastCardTemplateIdGlobal;
+  String? lastCardTemplateIdThisTurn;
 
   LudoRpgGameState({required this.players}) {
      for (var p in players) {
@@ -105,4 +167,11 @@ class LudoRpgGameState {
   }
 
   LudoPlayer get currentPlayer => players[currentPlayerIndex];
+
+  // Visual Effects Queue
+  final List<VisualEffect> visualEffects = [];
+  
+  void cleanupExpiredEffects() {
+      visualEffects.removeWhere((e) => e.isExpired);
+  }
 }

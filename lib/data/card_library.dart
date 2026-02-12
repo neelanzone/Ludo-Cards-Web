@@ -47,28 +47,28 @@ class CardLibrary {
       name: 'Steal', 
       description: 'Steal a card of your choice from a player',
       effectType: CardEffectType.stealCard, 
-      targetType: TargetType.opponent,
+      targetType: TargetType.none,
     ),
     CardTemplate(
       id: 'Board08', 
       name: 'Trade', 
       description: 'Exchange a card logic (To be imp.)', // Simplified for now
       effectType: CardEffectType.tradeCard, 
-      targetType: TargetType.opponent,
+      targetType: TargetType.none,
     ),
     CardTemplate(
       id: 'Board05', 
       name: "Robbin' Hood", 
       description: 'Steal a whole deck from a player',
       effectType: CardEffectType.stealDeck, 
-      targetType: TargetType.opponent,
+      targetType: TargetType.none,
     ),
     CardTemplate(
       id: 'Board11', 
       name: 'Stun', 
       description: 'A player of your choice is stunned and skips their turn',
       effectType: CardEffectType.skipTurn, 
-      targetType: TargetType.opponent,
+      targetType: TargetType.none,
     ),
     CardTemplate(
       id: 'Board09', 
@@ -122,7 +122,7 @@ class CardLibrary {
       name: 'Jump', 
       description: 'Jump over a tile',
       effectType: CardEffectType.jump, 
-      targetType: TargetType.tokenSelf,
+      targetType: TargetType.none,
     ),
     CardTemplate(
       id: 'Movement07', 
@@ -137,32 +137,32 @@ class CardLibrary {
       description: 'Reduce opponent movement by half',
       effectType: CardEffectType.modifyRoll, // Negative logic
       value: -50, // Flag for 50%
-      targetType: TargetType.opponent,
+      targetType: TargetType.none,
       isReaction: true,
     ),
     CardTemplate(
-      id: 'Movement04_Pull', 
+      id: 'Movement09', 
       name: 'Force Pull', 
       description: 'Pull any pawn closer to your pawn by 3 tiles',
       effectType: CardEffectType.forceMove, 
       value: -3, // Negative distance = pull closer
-      targetType: TargetType.tokenEnemy,
+      targetType: TargetType.none,
     ),
     CardTemplate(
       id: 'Movement01', 
       name: 'Astral Link', 
       description: 'Link your pawn to opponent',
       effectType: CardEffectType.astralLink, 
-      targetType: TargetType.tokenEnemy,
+      targetType: TargetType.none,
        isReaction: true,
     ),
     CardTemplate(
-      id: 'Movement04_Push', 
+      id: 'Movement04', 
       name: 'Force Push', 
       description: 'Push any pawn away from your pawn by 3 tiles',
       effectType: CardEffectType.forceMove, 
       value: 3, 
-      targetType: TargetType.tokenEnemy,
+      targetType: TargetType.none,
     ),
 
     // --- ATTACK ---

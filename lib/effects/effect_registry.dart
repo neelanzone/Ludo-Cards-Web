@@ -3,24 +3,39 @@ import 'effect_types.dart';
 import 'handlers/dice_effects.dart';
 import 'handlers/turn_effects.dart';
 import 'handlers/move_effects.dart';
+import 'handlers/move_effects.dart';
 import 'handlers/deck_effects.dart';
+import 'handlers/board_handler_adapter.dart';
 
 final Map<CardEffectType, EffectHandler> effectRegistry = {
-  // Dice
-  CardEffectType.modifyRoll: modifyRollEffect,
-  CardEffectType.doubleDie: doubleDieEffect,
-  CardEffectType.doubleBoth: doubleBothEffect,
-  CardEffectType.reroll: rerollEffect,
+  // Dice (Board Cards)
+  // Dice (Board Cards)
+  CardEffectType.modifyRoll: boardCardAdapter, // Boots, Dash, Slow -> Managed by Engine
+  CardEffectType.doubleDie: boardCardAdapter,
+  CardEffectType.doubleBoth: boardCardAdapter,
+  CardEffectType.reroll: boardCardAdapter,
+  CardEffectType.reroll2x: boardCardAdapter,
 
+  // Board / Interaction
+  CardEffectType.rotateDecks: boardCardAdapter,
+  CardEffectType.stealCard: boardCardAdapter,
+  CardEffectType.tradeCard: boardCardAdapter,
+  CardEffectType.stealDeck: boardCardAdapter,
+  
   // Turn
   CardEffectType.extraTurn: extraTurnEffect,
-  CardEffectType.skipTurn: skipTurnEffect,
+  CardEffectType.skipTurn: boardCardAdapter, // Stun
   CardEffectType.restartTurnNow: restartTurnNowEffect,
 
   // Movement
   CardEffectType.teleport: teleportEffect,
+  CardEffectType.teleport: teleportEffect,
+  CardEffectType.jump: boardCardAdapter,
   CardEffectType.swapPos: swapPosEffect,
+  CardEffectType.forceMove: boardCardAdapter, 
+  CardEffectType.astralLink: boardCardAdapter,
+  
   
   // Deck
-  CardEffectType.dumpsterDive: dumpsterDiveHandler,
+  CardEffectType.dumpsterDive: boardCardAdapter,
 };

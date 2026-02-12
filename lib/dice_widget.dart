@@ -10,6 +10,7 @@ class DiceWidget extends StatelessWidget {
   final bool isSelected;
   final Color? color;
   final bool isDoubled;
+  final bool showD12;
 
   const DiceWidget({
     super.key,
@@ -20,12 +21,16 @@ class DiceWidget extends StatelessWidget {
     this.size = 60.0,
     this.isSelected = false,
     this.isDoubled = false,
+    this.showD12 = false,
+    this.bonus = 0,
   });
+
+  final int bonus;
 
   @override
   Widget build(BuildContext context) {
-    // If value > 6, we show Number instead of Pips
-    final bool showNumber = value > 6;
+    // If value > 6 or D12 mode, we show Number instead of Pips
+    final bool showNumber = value > 6 || showD12;
     
     // Core Dice Visual
     Widget diceBody = AnimatedContainer(
@@ -34,16 +39,17 @@ class DiceWidget extends StatelessWidget {
         height: size,
         transform: isSelected ? Matrix4.identity().scaled(1.1) : Matrix4.identity(),
         decoration: BoxDecoration(
-          border: isSelected ? Border.all(color: Colors.white, width: 2) : null,
-          borderRadius: BorderRadius.circular(12), // Match painter radius roughly
-          boxShadow: isSelected 
+          // No box decoration for D12 (custom paint handles shape)
+          // But we need shadow locally if standard
+          borderRadius: showD12 ? null : BorderRadius.circular(12),
+          boxShadow: (isSelected && !showD12) 
               ? [BoxShadow(color: Colors.amberAccent.withOpacity(0.8), blurRadius: 12, spreadRadius: 2)] 
-              : (isEnabled 
+              : ((isEnabled && !showD12)
                   ? [BoxShadow(color: Colors.black45, blurRadius: 8, offset: Offset(2, 4))]
                   : []),
         ),
         child: CustomPaint(
-          painter: _DicePainter(value, color ?? Colors.white, showNumber),
+          painter: _DicePainter(value, color ?? Colors.white, showNumber, showD12, isSelected),
           child: showNumber 
              ? Center(
                   child: Text(
@@ -89,6 +95,33 @@ class DiceWidget extends StatelessWidget {
         );
     }
 
+    // Add Stack for Bonus
+    if (bonus > 0) {
+         diceBody = Stack(
+            clipBehavior: Clip.none,
+            children: [
+                diceBody,
+                Positioned(
+                    bottom: -8,
+                    right: -8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green, // Different color for bonus
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.white, width: 1.5),
+                        boxShadow: const [BoxShadow(blurRadius: 4, color: Colors.black45)],
+                      ),
+                      child: Text(
+                        "+$bonus",
+                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 10, color: Colors.white),
+                      ),
+                    ),
+                ),
+            ],
+        );
+    }
+
     return GestureDetector(
       onTap: isEnabled ? onTap : null,
       child: diceBody,
@@ -100,16 +133,78 @@ class _DicePainter extends CustomPainter {
   final int value;
   final Color baseColor;
   final bool showNumber;
+  final bool showD12;
+  final bool isSelected;
 
-  _DicePainter(this.value, this.baseColor, this.showNumber);
+  _DicePainter(this.value, this.baseColor, this.showNumber, this.showD12, this.isSelected);
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (showD12) {
+        _paintD12(canvas, size);
+    } else {
+        _paintD6(canvas, size);
+    }
+  }
+  
+  void _paintD12(Canvas canvas, Size size) {
+      final center = Offset(size.width / 2, size.height / 2);
+      final radius = size.width / 2;
+      
+      final Paint paint = Paint()
+        ..color = baseColor
+        ..style = PaintingStyle.fill;
+        
+      if (isSelected) {
+          paint.color = Colors.amber.shade200;
+          paint.maskFilter = const MaskFilter.blur(BlurStyle.outer, 8);
+      }
+      
+      // Draw Hexagon for D12 silhouette
+      final Path path = Path();
+      for (int i = 0; i < 6; i++) {
+          final double angle = (i * 60) * (pi / 180);
+          final double x = center.dx + radius * cos(angle);
+          final double y = center.dy + radius * sin(angle);
+          if (i == 0) path.moveTo(x, y);
+          else path.lineTo(x, y);
+      }
+      path.close();
+      
+      // Shadow
+      canvas.drawPath(
+          path.shift(const Offset(2, 4)), 
+          Paint()..color = Colors.black45..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4)
+      );
+      
+      // Body
+      canvas.drawPath(path, paint);
+      
+      // Inner lines to suggest deca/dodeca
+      final Paint linePaint = Paint()
+        ..color = Colors.black26
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+        
+      // Simple inner pentagon? Or Y shape?
+      // Y shape + inverted Y
+      canvas.drawPath(path, linePaint); // Outline
+      
+      // Inner structure (simplified)
+      // Connect center to vertices 0, 2, 4
+      /*
+      for (int i = 0; i < 6; i+=2) {
+          final double angle = (i * 60) * (pi / 180);
+          canvas.drawLine(center, Offset(center.dx + radius * cos(angle), center.dy + radius * sin(angle)), linePaint);
+      }
+      */
+  }
+
+  void _paintD6(Canvas canvas, Size size) {
     final rect = Rect.fromLTWH(0, 0, size.width, size.height);
     final rrect = RRect.fromRectAndRadius(rect, Radius.circular(12));
 
     // 1. 3D Body Gradient
-    // Radial gradient offset to top-left to look like light source
     final Paint bodyPaint = Paint()
       ..shader = RadialGradient(
         colors: [
@@ -128,7 +223,7 @@ class _DicePainter extends CustomPainter {
         Paint()..color = Colors.white30..style = PaintingStyle.stroke..strokeWidth = 1
     );
 
-    // 3. Pips (Dots) - ONLY if <= 6 (showNumber is false)
+    // 3. Pips (Dots)
     if (!showNumber) {
         final double pipRadius = size.width * 0.09;
         final Paint pipPaint = Paint()
@@ -141,7 +236,7 @@ class _DicePainter extends CustomPainter {
         
         // Logic for 1-6
         if (value % 2 != 0) {
-           drawPip(0.5, 0.5); // Center (1, 3, 5)
+           drawPip(0.5, 0.5); // Center
         }
         
         if (value > 1) {
@@ -169,9 +264,10 @@ class _DicePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DicePainter oldDelegate) {
-     return oldValue != value || oldColor != baseColor;
+     return oldDelegate.value != value || 
+            oldDelegate.baseColor != baseColor ||
+            oldDelegate.showNumber != showNumber ||
+            oldDelegate.showD12 != showD12 ||
+            oldDelegate.isSelected != isSelected;
   }
-  
-  int get oldValue => (this as dynamic).value; // Should ideally cast properly but standard pattern ok
-  Color get oldColor => (this as dynamic).baseColor;
 }

@@ -28,7 +28,10 @@ class LudoBoard extends StatefulWidget {
     this.onTokenTap,
     this.selectedTokenId,
     this.highlightAbsMain,
+    this.visualEffects,
   });
+  
+  final List<VisualEffect>? visualEffects;
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -133,6 +136,7 @@ class _LudoBoardState extends State<LudoBoard> {
                       boardImage: _boardImage,
                       selectedTokenId: widget.selectedTokenId,
                       highlightAbsMain: widget.highlightAbsMain,
+                      visualEffects: widget.visualEffects,
                   ),
                 ),
               ),
@@ -257,7 +261,10 @@ class LudoBoardPainter extends CustomPainter {
     this.boardImage,
     this.selectedTokenId,
     this.highlightAbsMain,
+    this.visualEffects,
   });
+  
+  final List<VisualEffect>? visualEffects;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -289,6 +296,7 @@ class LudoBoardPainter extends CustomPainter {
     if (highlightAbsMain != null) {
         _drawHighlights(canvas, cellW, cellH);
     }
+    _drawEffects(canvas, cellW, cellH);
     _drawTokensSmart(canvas, cellW, cellH);
 
     canvas.restore();
@@ -334,6 +342,35 @@ class LudoBoardPainter extends CustomPainter {
           
           canvas.drawCircle(pos + Offset(cw/2, ch/2), cw * 0.4, p);
           canvas.drawCircle(pos + Offset(cw/2, ch/2), cw * 0.4, border);
+      }
+  }
+
+  void _drawEffects(Canvas canvas, double cw, double ch) {
+      if (visualEffects == null) return;
+      
+      for (final e in visualEffects!) {
+          if (e is LaserVisualEffect) {
+              final center = Offset((e.origin.x + 0.5)*cw, (e.origin.y + 0.5)*ch);
+              final paint = Paint()
+                 ..color = Colors.redAccent.withOpacity(0.8)
+                 ..strokeWidth = cw * 0.2
+                 ..style = PaintingStyle.stroke
+                 ..strokeCap = StrokeCap.round
+                 ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8); // Glow
+                 
+              final corePaint = Paint()
+                 ..color = Colors.white
+                 ..strokeWidth = cw * 0.05
+                 ..style = PaintingStyle.stroke;
+              
+              if (e.horizontal) {
+                  canvas.drawLine(Offset(0, center.dy), Offset(cw*15, center.dy), paint);
+                  canvas.drawLine(Offset(0, center.dy), Offset(cw*15, center.dy), corePaint);
+              } else {
+                  canvas.drawLine(Offset(center.dx, 0), Offset(center.dx, ch*15), paint);
+                  canvas.drawLine(Offset(center.dx, 0), Offset(center.dx, ch*15), corePaint);
+              }
+          }
       }
   }
 
@@ -413,6 +450,41 @@ class LudoBoardPainter extends CustomPainter {
 
         paint.color = Colors.white;
         canvas.drawCircle(center, cellW * 0.1, paint);
+
+        // --- STATUS EFFECTS VISUALS ---
+        
+        // 1. Pandemic (Purple Dot)
+        if (token.hasEffect("Pandemic")) {
+            canvas.drawCircle(center + Offset(cellW*0.25, -cellW*0.25), cellW * 0.1, Paint()..color = Colors.purpleAccent);
+        }
+        
+        // 2. Armor (Black Dot) - Chainmail or EelArmour
+        if (token.hasEffect("Chainmail") || token.hasEffect("EelArmour")) {
+             canvas.drawCircle(center + Offset(-cellW*0.25, -cellW*0.25), cellW * 0.1, Paint()..color = Colors.black);
+        }
+        
+        // 3. Mirror (Cyan Dot)
+        if (token.hasEffect("Mirror")) {
+             canvas.drawCircle(center + Offset(cellW*0.25, cellW*0.25), cellW * 0.1, Paint()..color = Colors.cyanAccent);
+        }
+
+        // 4. Health (Hearts)
+        if (token.hp > 1) {
+            // Draw a small heart
+            final textPainter = TextPainter(textDirection: TextDirection.ltr);
+            textPainter.text = TextSpan(
+                text: String.fromCharCode(Icons.favorite.codePoint),
+                style: TextStyle(
+                    fontSize: cellW * 0.4, 
+                    fontFamily: Icons.favorite.fontFamily, 
+                    package: Icons.favorite.fontPackage,
+                    color: Colors.red 
+                )
+            );
+            textPainter.layout();
+            // Bottom Center
+            textPainter.paint(canvas, center + Offset(-textPainter.width/2, cellW*0.1));
+        }
      }
   }
 
@@ -499,9 +571,11 @@ class LudoBoardPainter extends CustomPainter {
   }
   
   @override
-  bool shouldRepaint(covariant LudoBoardPainter oldDelegate) {
+  bool shouldRepaint(LudoBoardPainter oldDelegate) {
       return oldDelegate.selectedTokenId != selectedTokenId ||
              oldDelegate.activeColor != activeColor ||
-             oldDelegate.boardImage != boardImage;
+             oldDelegate.boardImage != boardImage ||
+             oldDelegate.highlightAbsMain != highlightAbsMain ||
+             (visualEffects?.isNotEmpty ?? false); // Repaint if effects active
   } 
 }

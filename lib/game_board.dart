@@ -5,6 +5,7 @@ import 'models.dart';
 import 'ludo_board.dart';
 import 'ludo_rpg_engine.dart';
 import 'dice_widget.dart';
+import 'widgets/pending_overlays.dart';
 
 class GameBoard extends StatefulWidget {
   const GameBoard({super.key});
@@ -49,6 +50,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
         _engine.drawCard(_ludo, _ludo.currentPlayer.color);
       }
       _hoverIndex = null;
+      _checkToasts();
     });
   }
   late final AnimationController _deckShakeController;
@@ -129,7 +131,18 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
     // Initialize Decks and Hands via Engine
     _engine.initializeGame(_ludo);
+    
+    // Effects Cleanup Timer (check frequently for smooth expiration)
+    _effectsTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+        if (_ludo.visualEffects.isNotEmpty) {
+             setState(() {
+                 _ludo.cleanupExpiredEffects();
+             });
+        }
+    });
   }
+
+  late final Timer _effectsTimer;
 
   // Obsolete _generateDeck removed.
   
@@ -205,8 +218,8 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       // This ensures the dice "lands" on the correct number and stays there during the long 'settle' delay
       if (!mounted) return;
       setState(() {
-          _visualA = _ludo.dice.a!.value;
-          _visualB = _ludo.dice.b!.value;
+          _visualA = _ludo.dice.a!.effectiveValue;
+          _visualB = _ludo.dice.b!.effectiveValue;
       });
       await Future.delayed(Duration(milliseconds: delays.last));
       
@@ -215,11 +228,19 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       setState(() {
           _isRolling = false;
       });
+      _checkToasts();
+  }
+
+  void _checkToasts() {
+      while (_ludo.toastQueue.isNotEmpty) {
+          final msg = _ludo.toastQueue.removeAt(0);
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), duration: const Duration(milliseconds: 1500)));
+      }
   }
 
   void _syncDiceVisuals() {
-    if (_ludo.dice.a != null) _visualA = _ludo.dice.a!.value;
-    if (_ludo.dice.b != null) _visualB = _ludo.dice.b!.value;
+    if (_ludo.dice.a != null) _visualA = _ludo.dice.a!.effectiveValue;
+    if (_ludo.dice.b != null) _visualB = _ludo.dice.b!.effectiveValue;
   }
 
   Future<int?> _pickDieToDouble() async {
@@ -255,6 +276,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   
   @override
   void dispose() {
+    _effectsTimer.cancel();
     _deckShakeController.dispose();
     super.dispose();
   }
@@ -298,6 +320,17 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
   Future<void> _handleTokenTap(LudoToken token) async {
       if (_ludo.phase == TurnPhase.ended) return; 
+      
+      // Pending Token Pickers (Movement05 Jump, Force Pull/Push, Astral Link)
+      if (_ludo.pending?.type == PendingType.pickToken1 || _ludo.pending?.type == PendingType.pickToken2) {
+           _resolvePending({"tokenId": token.id});
+           return;
+      }
+      
+      if (_ludo.pending?.type == PendingType.selectAttackTarget || _ludo.pending?.type == PendingType.pickAttackTarget) {
+           _resolvePending({"targetId": token.id});
+           return;
+      }
       
       // Allow opponent selection ONLY in targeting phase
       if (_ludo.phase != TurnPhase.selectingTarget && token.color != _ludo.currentPlayer.color) return;
@@ -549,7 +582,6 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
         return;
     }
     
-    // Check actions
     if (_ludo.cardActionsRemaining <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No card actions remaining!"), duration: Duration(milliseconds: 800)));
         return;
@@ -559,154 +591,51 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     final template = CardLibrary.getById(cardData.templateId);
     if (template == null) return;
 
-    if (template.effectType == CardEffectType.doubleDie) {
-         if (_ludo.phase != TurnPhase.awaitAction) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Roll dice before using Double It.")));
-            return;
-         }
-         
-         final pick = await _pickDieToDouble();
-         if (pick == null) return;
-         
-         final res = _engine.playCard(gs: _ludo, card: template, dieIndex: pick);
-         if (res.success) {
-             await _discardCard(index);
-             setState(() {
-                 _syncDiceVisuals();
-                 _selectedDiceIndices.clear();
-                 _selectedTokenId = null;
-             });
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Played ${template.name}!"), duration: const Duration(milliseconds: 800)));
-         } else {
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Failed to double die."), duration: const Duration(milliseconds: 800)));
-         }
-
-    } else if (template.effectType == CardEffectType.doubleBoth) {
-         if (_ludo.phase != TurnPhase.awaitAction) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Roll dice before using Double It 2x.")));
-            return;
-         }
-         
-         final res = _engine.playCard(gs: _ludo, card: template);
-         if (res.success) {
-             await _discardCard(index);
-             setState(() {
-                 _syncDiceVisuals();
-                 _selectedDiceIndices.clear();
-                 _selectedTokenId = null;
-             });
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Applied Double Both!"), duration: const Duration(milliseconds: 800)));
-         } else {
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Failed to double dice."), duration: const Duration(milliseconds: 800)));
-         }
-         
-    } else if (template.effectType == CardEffectType.reroll) {
-         if (_ludo.phase != TurnPhase.awaitAction) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Roll dice first.")));
-            return;
-         }
-
-         // Single Reroll requires picking a die
-         final pick = await _pickDieToDouble(); // Reuse picker (A/B)
-         if (pick == null) return;
-
-         final res = _engine.playCard(gs: _ludo, card: template, dieIndex: pick);
-         if (res.success) {
-             await _discardCard(index);
-             setState(() {
-                 _syncDiceVisuals();
-                 _selectedDiceIndices.clear();
-                 _selectedTokenId = null;
-             });
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Rerolled Die!"), duration: const Duration(milliseconds: 800)));
-         } else {
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Reroll failed."), duration: const Duration(milliseconds: 800)));
-         }
-
-    } else if (template.effectType == CardEffectType.reroll2x) {
-         if (_ludo.phase != TurnPhase.awaitAction) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Roll dice first.")));
-            return;
-         }
-
-         final res = _engine.playCard(gs: _ludo, card: template);
-         if (res.success) {
-             await _discardCard(index);
-             setState(() {
-                 _syncDiceVisuals();
-                 _selectedDiceIndices.clear();
-                 _selectedTokenId = null;
-             });
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Rerolled Both!"), duration: const Duration(milliseconds: 800)));
-         } else {
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Reroll failed."), duration: const Duration(milliseconds: 800)));
-         }
-
-    } else if (template.targetType == TargetType.none) {
-        // Instant Cast
-        var res = _engine.playCard(gs: _ludo, card: template, target: null);
-        
-        // Handle Pending Choice (e.g. Dumpster Dive)
-        if (res.success && res.choice != null) {
-             if (res.choice!.type == PendingChoiceType.dumpsterPickOne) {
-                 final options = res.choice!.options.map((id) => _getCard(id)).toList(); // _getCard caches
-                 
-                 // Show Dialog
-                 final pickedId = await showDialog<String>(
-                     context: context, 
-                     barrierDismissible: false,
-                     builder: (_) => _DumpsterDialog(options: options)
-                 );
-                 
-                 if (pickedId != null) {
-                     final resolveRes = _engine.resolveChoice(_ludo, pickedId);
-                     if (resolveRes.success) {
-                         // Discard the Dumpster Dive card (consumes action)
-                         await _discardCard(index); 
-                         setState(() {
-                             _ludo.activeCardId = null;
-                             _pendingCardHandIndex = null;
-                         });
-                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Card Recovered!"), duration: Duration(milliseconds: 800)));
-                     } else {
-                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(resolveRes.message ?? "Failed to recover.")));
-                     }
-                 } else {
-                     // Cancelled -> Revert?
-                     // Ideally we revert the 'needsChoice' state. 
-                     // For MVP, if they cancel, we just reset pendingChoice and do nothing (card stays in hand).
-                     setState(() {
-                         _ludo.pendingChoice = null; 
-                         _ludo.activeCardId = null;
-                         _pendingCardHandIndex = null;
-                     });
-                 }
-             }
-             return;
-        }
-
-        if (res.success) {
-            _discardCard(index);
-            // Clear selections on success (especially for Restart Turn)
-            setState(() {
-                _syncDiceVisuals(); // Sync in case of Modify Roll
-                _selectedDiceIndices.clear();
-                _selectedTokenId = null;
-                _visualA = 4;
-                _visualB = 4;
-            });
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Played ${template.name}!"), duration: const Duration(milliseconds: 800)));
-        } else {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Failed to play card"), duration: const Duration(milliseconds: 800)));
-        }
-    } else {
-        // Requires Target
+    // Check if card requires a target token on the board (legacy/movement cards)
+    // Board cards usually don't have board-token targets (TargetType.none or TargetType.opponent handled via pending)
+    if (template.targetType != TargetType.none && 
+        template.targetType != TargetType.opponent) { // Opponent targeting is now handled via Pending (Pick Player overlay)
+        // Legacy target selection on board
         setState(() {
             _ludo.phase = TurnPhase.selectingTarget;
             _ludo.activeCardId = template.id;
              _pendingCardHandIndex = index;
         });
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Select Target for ${template.name}..."), duration: const Duration(seconds: 2)));
+        return;
+    }
+    
+    // Play Card Directly
+    final res = _engine.playCard(gs: _ludo, card: template, target: null); // Target null for instant/pending types
+    
+    if (res.success) {
+        // Discard immediately if successful AND not pending
+        // If pending, we usually wait to discard? 
+        // Engine logic says: if pending, it returns success=true and pending!=null.
+        // We should probably discard the card visually now?
+        // Or wait until resolution?
+        // Most games: discard on play. The effect happens.
+        // If effect is interactive, the card is already "played".
+        // Exception: if cancelled?
+        // My engine logic: `playBoardCard` returns pending. It DOES NOT decrement action count yet (wait for resolution).
+        // So we should probably TEMPORARILY hide the card or mark it used?
+        // For simplicity: Discard it now. If they cancel, we're in trouble.
+        // But my pending system doesn't support "Cancel" easily yet (engine state is mutated).
+        // So let's discard.
+        
+        await _discardCard(index);
+        
+        if (res.pending != null) {
+            setState(() {
+                // Trigger the overlay
+                // The overlay builds based on _ludo.pending
+                // We just need to trigger a rebuild
+            });
+        } else {
+           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Played ${template.name}!"), duration: const Duration(milliseconds: 800)));
+        }
+    } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Failed to play card"), duration: const Duration(milliseconds: 800)));
     }
   }
   
@@ -749,8 +678,18 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                    height: 150, 
                                     child: Center(
                                       child: GestureDetector(
-                                        onTap: _drawOneToHand,
-                                        child: _PileWidget(label: 'Draw', count: _ludo.sharedDrawPile.length, isDiscard: false),
+                                        onTap: _ludo.currentPlayer.hasEffect("SkipTurn") ? null : _drawOneToHand,
+                                        child: ColorFiltered(
+                                            colorFilter: _ludo.currentPlayer.hasEffect("SkipTurn") 
+                                                ? const ColorFilter.matrix(<double>[
+                                                    0.2126, 0.7152, 0.0722, 0, 0,
+                                                    0.2126, 0.7152, 0.0722, 0, 0,
+                                                    0.2126, 0.7152, 0.0722, 0, 0,
+                                                    0,      0,      0,      1, 0,
+                                                  ])
+                                                : const ColorFilter.mode(Colors.transparent, BlendMode.multiply),
+                                            child: _PileWidget(label: 'Draw', count: _ludo.sharedDrawPile.length, isDiscard: false),
+                                        ),
                                       )
                                    )
                                 ),
@@ -770,7 +709,9 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                            activeColor: _ludo.currentPlayer.color,
                                            onTokenTap: _handleTokenTap,
                                            selectedTokenId: _selectedTokenId,
+                                           visualEffects: _ludo.visualEffects,
                                        ),
+                                       // Center Dice Overlay
                                        // Center Dice Overlay
                                        IgnorePointer(
                                           // If rolling is not allowed (and not rolling), maybe let clicks pass through to board center?
@@ -793,14 +734,23 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                                        value: _visualA, 
                                                        size: 45, 
                                                        isSelected: _selectedDiceIndices.contains(0),
-                                                       // Enable if Rolling Allowed OR Selection Allowed
-                                                       isEnabled: (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) || (_ludo.phase == TurnPhase.awaitAction),
-                                                       onTap: () {
-                                                           if (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) _rollDice();
-                                                           else if (_ludo.phase == TurnPhase.awaitAction) _toggleDiceSelection(0);
-                                                       },
-                                                       color: (_ludo.dice.a?.used ?? false) ? Colors.grey : null,
                                                        isDoubled: _ludo.dice.a?.doubled ?? false,
+                                                       showD12: _ludo.dice.a?.showD12 ?? false,
+                                                       bonus: _ludo.dice.a?.bonus ?? 0,
+                                                       color: (_ludo.dice.a?.used ?? false) ? Colors.grey : null,
+                                                       // Enable if Rolling Allowed OR Selection Allowed OR Pending Dice Pick
+                                                       isEnabled: (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) || 
+                                                                  (_ludo.phase == TurnPhase.awaitAction) ||
+                                                                  (_ludo.pending?.type.toString().contains("pickDie") ?? false),
+                                                       onTap: () {
+                                                           if (_ludo.pending?.type == PendingType.pickDieToDouble || _ludo.pending?.type == PendingType.pickDieToReroll) {
+                                                               _resolvePending({"dieIndex": 0});
+                                                           } else if (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) {
+                                                               _rollDice();
+                                                           } else if (_ludo.phase == TurnPhase.awaitAction) {
+                                                               _toggleDiceSelection(0);
+                                                           }
+                                                       },
                                                      ),
                                                    )
                                                 ),
@@ -814,34 +764,93 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                                        value: _visualB, 
                                                        size: 45, 
                                                        isSelected: _selectedDiceIndices.contains(1),
-                                                       isEnabled: (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) || (_ludo.phase == TurnPhase.awaitAction),
-                                                       onTap: () {
-                                                           if (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) _rollDice();
-                                                           else if (_ludo.phase == TurnPhase.awaitAction) _toggleDiceSelection(1);
-                                                       },
-                                                       color: (_ludo.dice.b?.used ?? false) ? Colors.grey : null,
                                                        isDoubled: _ludo.dice.b?.doubled ?? false,
+                                                       showD12: _ludo.dice.b?.showD12 ?? false,
+                                                       bonus: _ludo.dice.b?.bonus ?? 0,
+                                                       color: (_ludo.dice.b?.used ?? false) ? Colors.grey : null,
+                                                       isEnabled: (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) || 
+                                                                  (_ludo.phase == TurnPhase.awaitAction) ||
+                                                                  (_ludo.pending?.type.toString().contains("pickDie") ?? false),
+                                                       onTap: () {
+                                                           if (_ludo.pending?.type == PendingType.pickDieToDouble || _ludo.pending?.type == PendingType.pickDieToReroll) {
+                                                               _resolvePending({"dieIndex": 1});
+                                                           } else if (_ludo.phase == TurnPhase.awaitRoll && !_isRolling) {
+                                                               _rollDice();
+                                                           } else if (_ludo.phase == TurnPhase.awaitAction) {
+                                                               _toggleDiceSelection(1);
+                                                           }
+                                                       },
                                                      ),
                                                    )
                                                 ),
 
-                                                // Roll Button Overlay
+                                                // Survival Roll Button
+                                                if (_ludo.phase == TurnPhase.pandemicSurvival)
+                                                    Align(
+                                                      alignment: Alignment.center,
+                                                      child: SizedBox(
+                                                        height: 28,
+                                                        child: ElevatedButton(
+                                                            onPressed: () {
+                                                                setState(() {
+                                                                    final res = _engine.rollPandemicSurvival(_ludo);
+                                                                    _checkToasts();
+                                                                    // Show specific outcomes?
+                                                                    if (res.events.contains("PANDEMIC_DEATH")) {
+                                                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Infection Fatal! 💀"), backgroundColor: Colors.red));
+                                                                    }
+                                                                    if (res.events.contains("PANDEMIC_CURED")) {
+                                                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Infection Cured! 💊"), backgroundColor: Colors.green));
+                                                                    }
+                                                                });
+                                                            },
+                                                            style: ElevatedButton.styleFrom(
+                                                              backgroundColor: Colors.purpleAccent, 
+                                                              foregroundColor: Colors.white,
+                                                              elevation: 6,
+                                                              shadowColor: Colors.black54,
+                                                              padding: const EdgeInsets.symmetric(horizontal: 10),
+                                                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                                            ),
+                                                            child: const Text("SURVIVAL ROLL", style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+                                                        ),
+                                                      ),
+                                                    ),
+
+                                                // Roll Button Overlay OR Stunned Message
                                                 if (_ludo.phase == TurnPhase.awaitRoll && !_isRolling)
                                                   Align(
                                                     alignment: Alignment.center,
                                                     child: SizedBox(
                                                       height: 28,
-                                                      child: ElevatedButton(
-                                                        onPressed: _rollDice,
-                                                        style: ElevatedButton.styleFrom(
-                                                          backgroundColor: Colors.amber, 
-                                                          foregroundColor: Colors.black,
-                                                          elevation: 6,
-                                                          shadowColor: Colors.black54,
-                                                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                                        ),
-                                                        child: const Text("ROLL", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+                                                      child: _ludo.currentPlayer.hasEffect("SkipTurn") 
+                                                      ? ElevatedButton(
+                                                          onPressed: () {
+                                                              // Stunned player acknowledges and ends turn
+                                                              _ludo.currentPlayer.effects.removeWhere((e) => e.id == "SkipTurn");
+                                                              _endTurn(); // Normal end turn logic
+                                                          },
+                                                          style: ElevatedButton.styleFrom(
+                                                            backgroundColor: Colors.grey.shade800, 
+                                                            foregroundColor: Colors.white,
+                                                            elevation: 6,
+                                                            shadowColor: Colors.black54,
+                                                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                                          ),
+                                                          child: const Text("Stunned! Ain't ya?", style: TextStyle(fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+                                                      )
+                                                      : ElevatedButton(
+                                                          onPressed: _rollDice,
+                                                          style: ElevatedButton.styleFrom(
+                                                            backgroundColor: Colors.amber, 
+                                                            foregroundColor: Colors.black,
+                                                            elevation: 6,
+                                                            shadowColor: Colors.black54,
+                                                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                                          ),
+                                                          child: const Text("ROLL", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
                                                       ),
                                                     ),
                                                   ),
@@ -982,6 +991,13 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
             ),
           ),
         ),
+        if (_ludo.pending != null)
+           Positioned.fill(
+             child: PendingOverlay(
+               gs: _ludo, 
+               onResolve: _resolvePending
+             )
+           ),
      ],
     ),
    );
@@ -1183,6 +1199,31 @@ Widget _fanHand(List<_Card> hand, LudoColor color) {
     );
   }
   
+  void _resolvePending(Map<String, dynamic> input) {
+      setState(() {
+          final res = _engine.resolvePending(_ludo, input);
+          if (res.success) {
+               _syncDiceVisuals();
+               // check events if needed
+               if (res.events.contains("HANDS_SHUFFLED")) {
+                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Hands Shuffled!"), duration: Duration(milliseconds: 1500)));
+               }
+               if (res.events.contains("PLAYER_STUNNED")) {
+                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Target Player Stunned!"), duration: Duration(milliseconds: 1500)));
+               }
+               if (res.events.contains("STEAL_COMPLETE")) {
+                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Card Stolen!"), duration: Duration(milliseconds: 1500)));
+               }
+              if (res.events.contains("TRADE_COMPLETE")) {
+                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Trade Complete!"), duration: Duration(milliseconds: 1500)));
+               }
+               _checkToasts();
+          } else {
+               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Action failed")));
+          }
+      });
+  }
+
   Widget _renderCardContent(_Card card, double lift, double scale, double opacity, double angle, LudoColor color, int index) {
       return GestureDetector(
           onTap: () => _handleCardTap(index, color),
@@ -1335,46 +1376,45 @@ class _PileWidgetState extends State<_PileWidget> {
   }
 
   Widget _deckCard({required bool shadow, bool hovered = false}) {
-  return Container(
-    width: 110,
-    height: 130,
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(14),
-      boxShadow: shadow
-          ? [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.6),
-                blurRadius: 16,
-                offset: const Offset(0, 6),
-              ),
-            ]
-          : null,
-    ),
-    child: ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: Stack(
-        children: [
-          // Card back
-          Image.asset(
-            'assets/cards/card_back.png',
-            fit: BoxFit.contain,
-            width: 110,
-            height: 130,
-          ),
-
-          // Hover overlay — ONLY on top card
-          if (hovered)
-            Positioned.fill(
-              child: Container(
-                color: Colors.black.withOpacity(0.7),
-              ),
-            ),
-        ],
+    return Container(
+      width: 110,
+      height: 130,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: shadow
+            ? [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.6),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : null,
       ),
-    ),
-  );
-}
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Stack(
+          children: [
+            // Card back
+            Image.asset(
+              'assets/cards/card_back.png',
+              fit: BoxFit.contain,
+              width: 110,
+              height: 130,
+            ),
 
+            // Hover overlay — ONLY on top card
+            if (hovered)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black.withOpacity(0.7),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
   List<double> _saturationMatrix(double s) {
     final inv = 1 - s;

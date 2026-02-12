@@ -4,18 +4,18 @@ class EffectResult {
   final bool ok;
   final String? error;
   final bool consumesAction;
-  final PendingChoice? choice;
+  final PendingInteraction? pending;
 
-  const EffectResult._(this.ok, this.error, this.consumesAction, this.choice);
+  const EffectResult._(this.ok, this.error, this.consumesAction, this.pending);
   
-  const EffectResult.ok({bool consumesAction = true, PendingChoice? choice}) 
-      : this._(true, null, consumesAction, choice);
+  const EffectResult.ok({bool consumesAction = true, PendingInteraction? pending}) 
+      : this._(true, null, consumesAction, pending);
       
   const EffectResult.fail(String msg) 
       : this._(false, msg, false, null);
       
-  factory EffectResult.needsChoice(PendingChoice choice) =>
-      EffectResult.ok(consumesAction: false, choice: choice);
+  factory EffectResult.needsInteraction(PendingInteraction pending) =>
+      EffectResult.ok(consumesAction: false, pending: pending);
 }
 
 /// Standard handler signature for all effects.

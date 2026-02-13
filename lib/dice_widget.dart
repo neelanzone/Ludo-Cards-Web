@@ -30,6 +30,8 @@ class DiceWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // If value > 6 or D12 mode, we show Number instead of Pips
+    // Debug
+    // print("DiceWidget build: val=$value eff=$value doubled=$isDoubled showD12=$showD12");
     final bool showNumber = value > 6 || showD12;
     
     // Core Dice Visual
@@ -152,12 +154,20 @@ class _DicePainter extends CustomPainter {
       final radius = size.width / 2;
       
       final Paint paint = Paint()
-        ..color = baseColor
         ..style = PaintingStyle.fill;
         
-      if (isSelected) {
-          paint.color = Colors.amber.shade200;
-          paint.maskFilter = const MaskFilter.blur(BlurStyle.outer, 8);
+      if (baseColor.value == Colors.grey.value) {
+          paint.color = Colors.grey.shade400; // Flat grey for used
+      } else {
+          // 3D Gradient for active D12
+           paint.shader = RadialGradient(
+              colors: [
+                 baseColor,
+                 _darken(baseColor, 0.3),
+              ],
+              center: Alignment.topLeft,
+              radius: 1.2,
+           ).createShader(Rect.fromCircle(center: center, radius: radius));
       }
       
       // Draw Hexagon for D12 silhouette
@@ -170,6 +180,17 @@ class _DicePainter extends CustomPainter {
           else path.lineTo(x, y);
       }
       path.close();
+
+      // Selection Glow (Draw FIRST or LAST? If Outer, doesn't matter much, but let's draw first to be behind?)
+      // Actually Outer draws outside.
+      if (isSelected) {
+          canvas.drawPath(path, Paint()
+              ..color = Colors.amber.shade400
+              ..style = PaintingStyle.stroke // Stroke for outline glow? Or fill with mask?
+              ..strokeWidth = 4
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8)
+          );
+      }
       
       // Shadow
       canvas.drawPath(
@@ -177,8 +198,15 @@ class _DicePainter extends CustomPainter {
           Paint()..color = Colors.black45..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4)
       );
       
-      // Body
+      // BODY
       canvas.drawPath(path, paint);
+      
+      // Outline - Make it distinct to prevent "transparency" look
+      final Paint outlinePaint = Paint()
+        ..color = Colors.black38
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
+      canvas.drawPath(path, outlinePaint);
       
       // Inner lines to suggest deca/dodeca
       final Paint linePaint = Paint()
@@ -205,15 +233,22 @@ class _DicePainter extends CustomPainter {
     final rrect = RRect.fromRectAndRadius(rect, Radius.circular(12));
 
     // 1. 3D Body Gradient
-    final Paint bodyPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-           baseColor,
-           _darken(baseColor, 0.3),
-        ],
-        center: Alignment.topLeft,
-        radius: 1.2,
-      ).createShader(rect);
+    // Use a simpler, flatter look for disabled/used dice (grey)
+    final bool isGrey = baseColor.value == Colors.grey.value; // Heuristic
+    
+    final Paint bodyPaint = Paint();
+    if (isGrey) {
+        bodyPaint.color = Colors.grey.shade400; // Flat grey
+    } else {
+        bodyPaint.shader = RadialGradient(
+          colors: [
+             baseColor,
+             _darken(baseColor, 0.3),
+          ],
+          center: Alignment.topLeft,
+          radius: 1.2,
+        ).createShader(rect);
+    }
 
     canvas.drawRRect(rrect, bodyPaint);
 

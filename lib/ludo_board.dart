@@ -19,6 +19,8 @@ class LudoBoard extends StatefulWidget {
   final LudoColor activeColor; 
   final String? selectedTokenId; // Highlight this token
   final List<int>? highlightAbsMain; // Highlight these main-track indices
+  final Set<String>? highlightTokenIds; // NEW: Highlight these tokens (valid targets)
+  final List<VisualEffect>? visualEffects;
 
   const LudoBoard({
     super.key, 
@@ -28,10 +30,11 @@ class LudoBoard extends StatefulWidget {
     this.onTokenTap,
     this.selectedTokenId,
     this.highlightAbsMain,
+    this.highlightTokenIds,
     this.visualEffects,
   });
-  
-  final List<VisualEffect>? visualEffects;
+
+
 
   @override
   State<LudoBoard> createState() => _LudoBoardState();
@@ -73,7 +76,7 @@ class _LudoBoardState extends State<LudoBoard> {
         // Shortest path normalization
         _turns += (diff - diff.round());
     }
-    _loadAssets();
+    // _loadAssets(); // Removed for performance
   }
 
   Future<void> _loadAssets() async {
@@ -136,6 +139,7 @@ class _LudoBoardState extends State<LudoBoard> {
                       boardImage: _boardImage,
                       selectedTokenId: widget.selectedTokenId,
                       highlightAbsMain: widget.highlightAbsMain,
+                      highlightTokenIds: widget.highlightTokenIds,
                       visualEffects: widget.visualEffects,
                   ),
                 ),
@@ -253,6 +257,8 @@ class LudoBoardPainter extends CustomPainter {
   final ui.Image? boardImage;
   final String? selectedTokenId;
   final List<int>? highlightAbsMain;
+  final Set<String>? highlightTokenIds;
+  final List<VisualEffect>? visualEffects;
 
   LudoBoardPainter({
     required this.players, 
@@ -261,10 +267,11 @@ class LudoBoardPainter extends CustomPainter {
     this.boardImage,
     this.selectedTokenId,
     this.highlightAbsMain,
+    this.highlightTokenIds,
     this.visualEffects,
   });
   
-  final List<VisualEffect>? visualEffects;
+
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -433,6 +440,13 @@ class LudoBoardPainter extends CustomPainter {
         final center = pos + offset;
         final paint = Paint()..style = PaintingStyle.fill;
         
+        // 0. Valid Target Highlight (e.g. Teleport candidates)
+        if (highlightTokenIds != null && highlightTokenIds!.contains(token.id)) {
+             // Pulsing or static glow (Cyan for friendly/valid, Red for enemy? Standard white/cyan glow)
+             canvas.drawCircle(center, cellW * 0.45, Paint()..color = Colors.cyanAccent.withOpacity(0.6)..style = PaintingStyle.stroke..strokeWidth = 2);
+             canvas.drawCircle(center, cellW * 0.45, Paint()..color = Colors.cyanAccent.withOpacity(0.2)..style = PaintingStyle.fill);
+        }
+
         // Selection Ring
         if (selectedTokenId == token.id) {
             canvas.drawCircle(center, cellW * 0.5, Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 3);

@@ -3,12 +3,10 @@ import 'effect_types.dart';
 import 'handlers/dice_effects.dart';
 import 'handlers/turn_effects.dart';
 import 'handlers/move_effects.dart';
-import 'handlers/move_effects.dart';
 import 'handlers/deck_effects.dart';
 import 'handlers/board_handler_adapter.dart';
 
 final Map<CardEffectType, EffectHandler> effectRegistry = {
-  // Dice (Board Cards)
   // Dice (Board Cards)
   CardEffectType.modifyRoll: boardCardAdapter, // Boots, Dash, Slow -> Managed by Engine
   CardEffectType.doubleDie: boardCardAdapter,
@@ -29,13 +27,21 @@ final Map<CardEffectType, EffectHandler> effectRegistry = {
 
   // Movement
   CardEffectType.teleport: teleportEffect,
-  CardEffectType.teleport: teleportEffect,
   CardEffectType.jump: boardCardAdapter,
   CardEffectType.swapPos: swapPosEffect,
   CardEffectType.forceMove: boardCardAdapter, 
   CardEffectType.astralLink: boardCardAdapter,
   
-  
+  // Attack & Defense
+  CardEffectType.modifyAttackRange: boardCardAdapter,
+  CardEffectType.laser: boardCardAdapter,
+  CardEffectType.infect: boardCardAdapter,
+  CardEffectType.applyShield: boardCardAdapter,
+  CardEffectType.applyMirror: boardCardAdapter,
+  CardEffectType.applyResist: boardCardAdapter,
+  CardEffectType.resurrect: boardCardAdapter,
+  CardEffectType.cure: boardCardAdapter,
+
   // Deck
   CardEffectType.dumpsterDive: boardCardAdapter,
 };

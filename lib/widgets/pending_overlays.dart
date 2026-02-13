@@ -15,21 +15,25 @@ class PendingOverlay extends StatelessWidget {
     final type = gs.pending!.type;
     final data = gs.pending!.data;
 
+    // Determine if we should dim the background (block interaction)
+    bool dimBackground = true;
+    if (type == PendingType.pickDieToDouble || 
+        type == PendingType.pickDieToReroll ||
+        type == PendingType.pickToken1 ||
+        type == PendingType.pickToken2 || 
+        type == PendingType.pickAttackTarget || 
+        type == PendingType.selectAttackTarget) {
+        dimBackground = false;
+    }
+
     return Stack(
       children: [
         // Dim Background
-        if (type != PendingType.pickDieToDouble && 
-            type != PendingType.pickDieToReroll &&
-            type != PendingType.pickToken1 &&
-            type != PendingType.pickToken2)
+        if (dimBackground)
             Container(color: Colors.black54),
 
         // Content
-        SafeArea(
-          child: Center(
-            child: _buildContent(context, type, data),
-          ),
-        ),
+        _buildContent(context, type, data),
       ],
     );
   }
@@ -40,59 +44,41 @@ class PendingOverlay extends StatelessWidget {
       case PendingType.pickDieToReroll:
         return const Positioned(
             top: 100,
-            child: Material(
-                color: Colors.transparent,
-                child: Text("Tap a Die to Select", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, shadows: [Shadow(blurRadius: 10, color: Colors.black)]))
+            left: 0, 
+            right: 0,
+            child: Center(
+              child: Material(
+                  color: Colors.transparent,
+                  child: Text("Tap a Die to Select", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, shadows: [Shadow(blurRadius: 10, color: Colors.black)]))
+              )
             )
         );
-      
-
       
       case PendingType.selectAttackTarget:
       case PendingType.pickAttackTarget: // Alias
          return const Positioned(
             top: 100,
-            child: Material(
-                color: Colors.transparent,
-                child: Text("Select Enemy Target", style: TextStyle(color: Colors.redAccent, fontSize: 24, fontWeight: FontWeight.bold, shadows: [Shadow(blurRadius: 10, color: Colors.black)]))
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Material(
+                  color: Colors.transparent,
+                  child: Text("Select Enemy Target", style: TextStyle(color: Colors.redAccent, fontSize: 24, fontWeight: FontWeight.bold, shadows: [Shadow(blurRadius: 10, color: Colors.black)]))
+              )
             )
          );
          
       case PendingType.pickAttackDirection:
-          return Center(
-              child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                      const Material(
-                          color: Colors.transparent,
-                          child: Text("Select Laser Axis", style: TextStyle(color: Colors.cyanAccent, fontSize: 28, fontWeight: FontWeight.bold, shadows: [Shadow(blurRadius: 10, color: Colors.black)]))
-                      ),
-                      const SizedBox(height: 30),
-                      Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                              ElevatedButton(
-                                  onPressed: () => onResolve({"axis": "horizontal"}),
-                                  style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(20), backgroundColor: Colors.blueGrey),
-                                  child: const Column(children: [Icon(Icons.swap_horiz, size: 40), Text("Horizontal")]),
-                              ),
-                              const SizedBox(width: 20),
-                              ElevatedButton(
-                                  onPressed: () => onResolve({"axis": "vertical"}),
-                                  style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(20), backgroundColor: Colors.blueGrey),
-                                  child: const Column(children: [Icon(Icons.swap_vert, size: 40), Text("Vertical")]),
-                              ),
-                          ]
-                      )
-                  ]
-              )
-          );
+          // Legacy: Laser now auto-detects direction. This case should never fire.
+          return const SizedBox.shrink();
          
       case PendingType.selectResurrectTarget:
-          return _ResurrectPicker(
+          return SafeArea(child: Center(
+            child: _ResurrectPicker(
               tokens: gs.currentPlayer.tokens.where((t) => t.isDead).toList(),
               onResolve: (id) => onResolve({"tokenId": id}),
-          );
+            )
+          ));
 
       case PendingType.pickToken1:
       case PendingType.pickToken2:
@@ -103,59 +89,76 @@ class PendingOverlay extends StatelessWidget {
         
         return Positioned(
             top: 100,
-            child: Material(
-                color: Colors.transparent,
-                child: Text(
-                     msg,
-                     style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, shadows: [Shadow(blurRadius: 10, color: Colors.black)])
-                )
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Material(
+                  color: Colors.transparent,
+                  child: Text(
+                       msg,
+                       style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, shadows: [Shadow(blurRadius: 10, color: Colors.black)])
+                  )
+              )
             )
         );
         
       case PendingType.confirmRerollChoiceSingle:
-        return _RerollConfirmDialog(
+        return SafeArea(child: Center(
+          child: _RerollConfirmDialog(
             oldVal: data["old"], 
             newVal: data["new"],
             dieIndex: data["dieIndex"],
             onResolve: onResolve
-        );
+          )
+        ));
         
       case PendingType.confirmRerollChoiceBoth:
-        return _RerollConfirmBothDialog(
+        return SafeArea(child: Center(
+          child: _RerollConfirmBothDialog(
             data: data,
             onResolve: onResolve
-        );
+          )
+        ));
 
       case PendingType.pickPlayer:
-        return _PlayerPicker(
+        return SafeArea(child: Center(
+          child: _PlayerPicker(
             currentPlayer: gs.currentPlayer.color,
             onResolve: onResolve
-        );
+          )
+        ));
 
       case PendingType.pickCardFromOpponentHand:
-        return _HandPicker(
+        return SafeArea(child: Center(
+          child: _HandPicker(
             title: "Pick a Card to Steal",
             cardIds: gs.hands[LudoColor.values.firstWhere((c) => c.toString().split('.').last == data["targetColor"])]!,
             onResolve: (cardId) => onResolve({"cardId": cardId}),
-        );
+          )
+        ));
         
       case PendingType.pickCardFromYourHand:
-        return _HandPicker(
+        return SafeArea(child: Center(
+          child: _HandPicker(
             title: "Pick a Card to Give",
             cardIds: gs.hands[gs.currentPlayer.color]!,
             onResolve: (cardId) => onResolve({"cardId": cardId}),
-        );
+          )
+        ));
 
       case PendingType.robinPickCard:
-         return _HandPicker(
+         return SafeArea(child: Center(
+           child: _HandPicker(
             title: "Distribute: Pick Cards",
             cardIds: List<String>.from(data["pool"]),
             onResolve: (result) => onResolve({"cardIds": result}), // Pass list or single
             allowMulti: true,
-         );
+           )
+         ));
          
       case PendingType.robinPickRecipient:
-         return _PlayerPicker(
+         return SafeArea(child: Center(
+           child: _PlayerPicker(
              currentPlayer: gs.currentPlayer.color,
              excludeColors: [
                  gs.currentPlayer.color,
@@ -163,17 +166,20 @@ class PendingOverlay extends StatelessWidget {
              ],
              title: "Pick Recipient",
              onResolve: (colorMap) => onResolve({"recipientColor": colorMap["targetColor"]}),
-         );
+           )
+         ));
 
       case PendingType.dumpsterBrowsePick:
          final snapshot = List<String>.from(data["snapshot"]);
-         return _DumpsterBrowser(
+         return SafeArea(child: Center(
+           child: _DumpsterBrowser(
              cardIds: snapshot,
              onResolve: onResolve
-         );
+           )
+         ));
 
       default:
-        return Text("Unknown Pending Type: $type", style: const TextStyle(color: Colors.red));
+        return SafeArea(child: Center(child: Text("Unknown Pending Type: $type", style: const TextStyle(color: Colors.red))));
     }
   }
 }

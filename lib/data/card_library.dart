@@ -73,7 +73,7 @@ class CardLibrary {
     CardTemplate(
       id: 'Board09', 
       name: 'Dumpster Dive', 
-      description: 'Keep two cards from discard pile',
+      description: 'Pick one card from the discard pile',
       effectType: CardEffectType.dumpsterDive, 
       targetType: TargetType.none,
     ),
@@ -88,7 +88,7 @@ class CardLibrary {
       id: 'Board10', 
       name: 'Mimic', 
       description: 'Copy the last card played',
-      effectType: CardEffectType.modifyRoll, // Placeholder: Mimic needs special logic
+      effectType: CardEffectType.modifyRoll, // Routes through boardCardAdapter → _mimic
       targetType: TargetType.none,
     ),
 
@@ -172,7 +172,7 @@ class CardLibrary {
       description: 'Increases attack range up to 1 tile',
       effectType: CardEffectType.modifyAttackRange, 
       value: 1, 
-      targetType: TargetType.tokenSelf,
+      targetType: TargetType.none, // Targeting handled by pickToken1 pending
     ),
     CardTemplate(
       id: 'Attack01', 
@@ -180,7 +180,7 @@ class CardLibrary {
       description: 'Increases attack range up to 3 tiles',
       effectType: CardEffectType.modifyAttackRange, 
       value: 3, 
-      targetType: TargetType.tokenSelf,
+      targetType: TargetType.none, // Targeting handled by pickToken1 pending
     ),
     CardTemplate(
       id: 'Attack04', 
@@ -188,7 +188,7 @@ class CardLibrary {
       description: 'Increases attack range up to 6 tiles',
       effectType: CardEffectType.modifyAttackRange, 
       value: 6, 
-      targetType: TargetType.tokenSelf,
+      targetType: TargetType.none, // Targeting handled by pickToken1 pending
     ),
      CardTemplate(
       id: 'Attack05', 
@@ -196,21 +196,21 @@ class CardLibrary {
       description: 'Increases attack range up to 2 tiles, through walls',
       effectType: CardEffectType.modifyAttackRange, 
       value: 2, 
-      targetType: TargetType.tokenSelf,
+      targetType: TargetType.none, // Targeting handled by pickToken1 pending
     ),
     CardTemplate(
       id: 'Attack03', 
       name: 'Laser', 
       description: 'Attacks all pawns in a single line',
       effectType: CardEffectType.laser, 
-      targetType: TargetType.tokenSelf, // Source of Laser
+      targetType: TargetType.none, // Targeting handled by pickToken1 pending
     ),
     CardTemplate(
       id: 'Attack06', 
       name: 'Pandemic', 
       description: 'Infects the pawn',
       effectType: CardEffectType.infect, 
-      targetType: TargetType.tokenEnemy,
+      targetType: TargetType.none, // Targeting handled by pickToken1 pending
     ),
 
     // --- DEFENSE ---
@@ -227,7 +227,7 @@ class CardLibrary {
       name: 'Resurrect', 
       description: 'Bring a pawn back on the board',
       effectType: CardEffectType.resurrect, 
-      targetType: TargetType.tokenSelf, // Or Graveyard selection?
+      targetType: TargetType.none, // Dead token selection handled by selectResurrectTarget pending
     ),
     CardTemplate(
       id: 'Defence06', 

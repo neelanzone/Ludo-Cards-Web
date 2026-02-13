@@ -147,47 +147,8 @@ class LudoRpgEngine implements LudoRpgEngineApi {
           if (events != null) events.add("TOKEN_KILLED");
       }
       
-      // 4. Astral Link Propagation
-      // Check if target's player has an active Astral Link involving this token
-      // Link is stored on the OWNER of the source token (usually).
-      // Or we check all players for a link referencing this token?
-      // Logic: Link A and B. Damage to A -> Damage to B? Or Damage to B -> Damage to A?
-      // "Link your pawn to opponent". Usually bidirectional or "Source shares pain with Target".
-      // Let's implement simpler: Check ANY active link referencing this token.
-      
-      for (var p in gs.players) {
-          if (p.effects.any((e) => e.id == "AstralLink")) {
-              final link = p.effects.firstWhere((e) => e.id == "AstralLink");
-              final aId = link.data["aId"];
-              final bId = link.data["bId"];
-              
-              if (target.id == aId || target.id == bId) {
-                  // Propagate to the other!
-                  final otherId = (target.id == aId) ? bId : aId;
-                  final other = _findTokenById(gs, otherId);
-                  
-                  if (other != null && !other.isDead && !other.isInBase && other.hp > 0) {
-                       // Avoid infinite loop: Is this a recursive call?
-                       // Simple check: Don't recurse ifamount is 0 (unlikely)
-                       // Better: Pass flag? Or just apply direct damage without calling _applyDamage again?
-                       // Or call _applyDamage with 'isPropagation' flag?
-                       
-                       // Direct apply to avoid recursion for now, or ensure only 1 hop.
-                       // User report says "not implemented", so basic impl is key.
-                       
-                       other.hp -= amount;
-                       if (other.hp <= 0) {
-                           other.hp = 0;
-                           other.status = TokenStatus.dead;
-                           other.position = -1;
-                           gs.toast("🔗 ${other.id} died/hurt via Astral Link!");
-                       } else {
-                           gs.toast("🔗 ${other.id} hurt via Astral Link!");
-                       }
-                  }
-              }
-          }
-      }
+      // 4. Astral Link Propagation - REMOVED
+      // User clarification: "Only the movement applies through astral link, not the attack or damage."
   }
 
   List<LudoToken> _tokensAtAbs(LudoRpgGameState gs, int abs) {
@@ -285,6 +246,135 @@ class LudoRpgEngine implements LudoRpgEngineApi {
 
 
   /// Convert a token's RELATIVE main position (0..51) into ABSOLUTE main index (0..51)
+  int toAbsoluteMainIndexFromRelative(LudoToken token, {int? overridePos}) {
+      int rel = overridePos ?? token.position;
+      // If not on main track, this is undefined/error for movement logic, 
+      // but commonly used for "if I were on main track".
+      // Formula: (rel + startOffset) % 52
+      return (rel + _startOffsetAbs[token.color]!) % mainTrackLen;
+  }
+
+  /// Sets a token's relative position based on a desired absolute main index.
+  /// Handles wrapping logic correctly.
+  void setTokenRelativeFromAbsolute(LudoToken token, int absIndex) {
+      // rel = (abs - startOffset) % 52
+      // Handle negative modulo in Dart: ((a % n) + n) % n
+      int offset = _startOffsetAbs[token.color]!;
+      int rel = ((absIndex - offset) % mainTrackLen + mainTrackLen) % mainTrackLen;
+      token.position = rel;
+  }
+  
+  /// Safe Teleport: Moves token 'steps' forward on the track, wrapping around 52.
+  /// Ignores home stretch entry (teleport stays on main track ring).
+  void teleportToken(LudoRpgGameState gs, LudoToken token, int steps, {bool isAstral = false}) {
+      if (!token.isOnMain) {
+          gs.toast("Teleport failed: Not on main track.");
+          return;
+      }
+      
+      int currentAbs = toAbsoluteMainIndexFromRelative(token);
+      int newAbs = (currentAbs + steps) % mainTrackLen; 
+      // Ensure positive modulo for backward teleport
+      newAbs = (newAbs + mainTrackLen) % mainTrackLen;
+      
+      setTokenRelativeFromAbsolute(token, newAbs);
+      
+      _handleCollisions(gs, token, ["TELEPORT_LAND"]);
+      _checkInvariants(gs);
+      
+      // Astral Link Check
+      if (!isAstral) {
+           _triggerAstralLink(gs, token, steps);
+      }
+  }
+  
+  void _triggerAstralLink(LudoRpgGameState gs, LudoToken source, int steps) {
+      // Check ALL players for an active Astral Link
+      for (var p in gs.players) {
+          if (p.effects.any((e) => e.id == "AstralLink")) {
+             final link = p.effects.firstWhere((e) => e.id == "AstralLink");
+             final aId = link.data["aId"];
+             final bId = link.data["bId"];
+             
+             String? partnerId;
+             if (source.id == aId) partnerId = bId;
+             else if (source.id == bId) partnerId = aId;
+             
+             if (partnerId != null) {
+                 final partner = _findTokenById(gs, partnerId);
+                 // Partner must be on Main track to mimic movement properly
+                 if (partner != null && !partner.isDead && !partner.isInBase && partner.isOnMain) {
+                     // Move partner by same steps (Jump/Teleport logic)
+                     teleportToken(gs, partner, steps, isAstral: true);
+                     gs.toast("Astral Link moves ${partner.id}!");
+                 }
+             }
+         }
+      }
+  }
+
+  void _fireLaserAxis(LudoRpgGameState gs, LudoToken source, bool horizontal) {
+      final center = _tokenGridCell(source);
+      if (center == null) return;
+      
+      // Add Visual Effect
+      gs.visualEffects.add(LaserVisualEffect(
+          durationMs: 800, 
+          origin: Point(center.x, center.y), 
+          horizontal: horizontal
+      ));
+      
+      // Collect all tokens in the beam line with their signed distance from source
+      final List<(LudoToken, int)> hitTokens = []; // (token, signedDistance)
+      
+      for (var p in gs.players) {
+          for (var t in p.tokens) {
+              if (t.isDead || t.isInBase || t.isFinished) continue;
+              if (t == source) continue; 
+              
+              final tCell = _tokenGridCell(t);
+              if (tCell == null) continue;
+              
+              bool inLine = false;
+              int dist = 0;
+              if (horizontal && tCell.y == center.y) {
+                  inLine = true;
+                  dist = tCell.x - center.x; // negative = left, positive = right
+              }
+              if (!horizontal && tCell.x == center.x) {
+                  inLine = true;
+                  dist = tCell.y - center.y; // negative = up, positive = down
+              }
+              
+              if (inLine && dist != 0) {
+                  hitTokens.add((t, dist));
+              }
+          }
+      }
+      
+      // Process each direction separately, sorted by distance (closest first)
+      // Positive direction
+      final posDir = hitTokens.where((e) => e.$2 > 0).toList()
+          ..sort((a, b) => a.$2.compareTo(b.$2));
+      // Negative direction  
+      final negDir = hitTokens.where((e) => e.$2 < 0).toList()
+          ..sort((a, b) => a.$2.abs().compareTo(b.$2.abs()));
+      
+      for (final direction in [posDir, negDir]) {
+          for (final (t, _) in direction) {
+              if (isTokenSafeFromAttack(t)) {
+                  gs.toast("Laser missed ${t.id} (Safe)");
+              } else if (t.hasEffect("Mirror")) {
+                  // Mirror blocks laser and stops the beam in this direction
+                  t.effects.removeWhere((e) => e.id == "Mirror");
+                  gs.toast("🪞 ${t.id}'s Mirror blocked the Laser!");
+                  break; // Beam stops — tokens behind are protected
+              } else {
+                  _applyDamage(gs, target: t, amount: 1, attacker: source, isMelee: false, events: ["LASER_HIT"]);
+              }
+          }
+      }
+  }
 
   
 
@@ -390,39 +480,7 @@ class LudoRpgEngine implements LudoRpgEngineApi {
     }
 
     // Check Astral Link
-    final link = gs.currentPlayer.effects.firstWhere(
-        (e) => e.id == "AstralLink", 
-        orElse: () => const ActiveEffect(id: "none", duration: 0)
-    );
-    if (link.id != "none") {
-         // This player has an active link. Check if this token is the source (A).
-         final aId = link.data?["aId"];
-         final bId = link.data?["bId"];
-         
-         if (token.id == aId) {
-             // Move B by same steps
-             // B must be on main or compatible?
-             // Simplification: Link works best on main track.
-             if (bId != null) {
-                 // specific logic later or basic implementation now
-                 // Need to find token B
-                 LudoToken? tokenB;
-                 for(var p in gs.players) {
-                     for (var t in p.tokens) {
-                         if (t.id == bId) { tokenB = t; break; }
-                     }
-                 }
-                 
-                 if (tokenB != null && tokenB.isOnMain && token.isOnMain) {
-                      // Move B same amount
-                      final bAbs = toAbsoluteMainIndexFromRelative(tokenB);
-                      final newBAbs = (bAbs + steps) % mainTrackLen;
-                      setTokenRelativeFromAbsolute(tokenB, newBAbs);
-                      gs.toast("Astral Link pulls ${tokenB.id}!");
-                 }
-             }
-         }
-    }
+    _triggerAstralLink(gs, token, steps);
 
     // Mark dice used
     // Mark dice used (Atomic spend)
@@ -833,6 +891,8 @@ class LudoRpgEngine implements LudoRpgEngineApi {
       case "Movement09": return _forcePull(gs);
       case "Movement04": return _forcePush(gs);
       case "Movement01": return _astralLink(gs);
+      case "Movement07": return _swap(gs); // NEW
+      case "Board06": return _sandsOfTime(gs); // NEW
 
       
       // Attack & Defence
@@ -870,16 +930,13 @@ class LudoRpgEngine implements LudoRpgEngineApi {
       case PendingType.pickCardFromYourHand: res = _resolvePickYourCard(gs, input); break;
       case PendingType.robinPickCard: res = _resolveRobinPickCard(gs, input); break;
       case PendingType.robinPickRecipient: res = _resolveRobinPickRecipient(gs, input); break;
-      case "DumpsterBrowsePick": 
       case PendingType.dumpsterBrowsePick: res = _resolveDumpsterPick(gs, input); break;
       
       case PendingType.pickToken1: res = _resolvePickToken1(gs, input); break;
       case PendingType.pickToken2: res = _resolvePickToken2(gs, input); break;
       case PendingType.selectResurrectTarget: res = _resolveResurrectTarget(gs, input); break;
-      case PendingType.selectResurrectTarget: res = _resolveResurrectTarget(gs, input); break;
       case PendingType.pickAttackTarget: // Fallthrough
       case PendingType.selectAttackTarget: res = _resolveAttackTarget(gs, input); break;
-      case PendingType.pickAttackDirection: res = _resolveAttackDirection(gs, input); break;
       
       default: res = EngineResult.fail("Unsupported pending action.");
     }
@@ -914,8 +971,8 @@ class LudoRpgEngine implements LudoRpgEngineApi {
   EngineResult _doubleIt2x(LudoRpgGameState gs) {
     if (gs.phase == TurnPhase.awaitRoll) return EngineResult.fail("Card cannot be played before dice is rolled");
     
-    gs.dice.a?.multiplier = 2; gs.dice.a?.showD12 = true;
-    gs.dice.b?.multiplier = 2; gs.dice.b?.showD12 = true;
+    gs.dice.a?.multiplier = 2; gs.dice.a?.showD12 = true; gs.dice.a?.doubled = true;
+    gs.dice.b?.multiplier = 2; gs.dice.b?.showD12 = true; gs.dice.b?.doubled = true;
     
     _completeCardAction(gs);
     return EngineResult.ok(events: ["DICE_DOUBLED"]);
@@ -1348,9 +1405,11 @@ class LudoRpgEngine implements LudoRpgEngineApi {
     if (which == 0) {
       gs.dice.a?.multiplier = 2;
       gs.dice.a?.showD12 = true;
+      gs.dice.a?.doubled = true;
     } else if (which == 1) {
       gs.dice.b?.multiplier = 2;
       gs.dice.b?.showD12 = true;
+      gs.dice.b?.doubled = true;
     } else {
       return EngineResult.fail("Invalid die selection.");
     }
@@ -1485,24 +1544,35 @@ class LudoRpgEngine implements LudoRpgEngineApi {
         return EngineResult.ok(events: ["JUMPED"]);
     }
     
-    // Defence Cards
-    if (source == "Defence01" || source == "Defence02" || source == "Defence03") {
-        final token = _findTokenById(gs, tokenId);
-        if (token == null) return EngineResult.fail("Invalid token");
-        if (token.color != gs.currentPlayer.color) return EngineResult.fail("Pick your own token");
-        if (token.isDead || token.isFinished || token.isInBase) return EngineResult.fail("Token ineligible");
-        
-        String effectId;
-        String event;
-        if (source == "Defence01") { effectId = "Chainmail"; event = "CHAINMAIL_EQUIPPED"; token.hp = 2; } // HP+1
-        else if (source == "Defence02") { effectId = "EelArmour"; event = "EEL_ARMOUR_EQUIPPED"; token.hp = 2; } // HP+1 + Thorns
-        else if (source == "Defence06") { effectId = "StinkBomb"; event = "STINK_BOMB_READY"; } 
-        else if (source == "Defence04") { effectId = "Resist"; event = "RESIST_READY"; }
-        else { effectId = "Mirror"; event = "MIRROR_EQUIPPED"; } // Status Only
-        
-        token.effects.add(ActiveEffect(id: effectId, duration: 999)); // Permanent until damaged/used
-        _completeCardAction(gs);
-        return EngineResult.ok(events: [event]);
+    // Defence Cards (Token-targeted)
+    if (source == "Defence01" || source == "Defence02" || source == "Defence03" ||
+        source == "Defence04" || source == "Defence06") {
+      final token = _findTokenById(gs, tokenId);
+      if (token == null) return EngineResult.fail("Invalid token");
+      if (token.color != gs.currentPlayer.color) return EngineResult.fail("Pick your own token");
+      if (token.isDead || token.isFinished || token.isInBase) return EngineResult.fail("Token ineligible");
+
+      late final String effectId;
+      late final String event;
+
+      switch (source) {
+        case "Defence01":
+          effectId = "Chainmail"; event = "CHAINMAIL_EQUIPPED"; token.hp = 2; break;
+        case "Defence02":
+          effectId = "EelArmour"; event = "EEL_ARMOUR_EQUIPPED"; token.hp = 2; break;
+        case "Defence03":
+          effectId = "Mirror"; event = "MIRROR_EQUIPPED"; break;
+        case "Defence04":
+          effectId = "Resist"; event = "RESIST_READY"; break;
+        case "Defence06":
+          effectId = "StinkBomb"; event = "STINK_BOMB_READY"; break;
+        default:
+          return EngineResult.fail("Unknown defence card");
+      }
+
+      token.effects.add(ActiveEffect(id: effectId, duration: 999));
+      _completeCardAction(gs);
+      return EngineResult.ok(events: [event]);
     }
     
     // Attack Source Selection (Laser / Pandemic / Spear / etc if they need source FIRST)
@@ -1519,13 +1589,57 @@ class LudoRpgEngine implements LudoRpgEngineApi {
              _completeCardAction(gs);
              return EngineResult.ok(events: ["PANDEMIC_INFECTED"]);
          } else if (source == "Attack03") { // Laser
-             // Laser Rule: Choose Axis (Horizontal/Vertical)
-             gs.pending = PendingInteraction(
-                 type: PendingType.pickAttackDirection,
-                 sourceCardId: source,
-                 data: {"sourceId": tokenId}
-             );
-             return EngineResult.needsInteraction(gs.pending!);
+             // Laser Rule: Auto-detect longer axis
+             // If on main track, depends on which arm.
+             // Red (0..12): Bottom arm, Horizontal?
+             // Actually let's use the grid position.
+             // If closer to X-axis center, fire Vertical?
+             // User said: "longer axis from the token's perspective".
+             
+             // Simple heuristic:
+             // If y is 7 (Horizontal arm), fire Horizontal.
+             // If x is 7 (Vertical arm), fire Vertical.
+             // If neither (corner), fire both or pick one?
+             // Most main track is on "arms".
+             // Corners: 0, 13, 26, 39.
+             
+             final cell = _tokenGridCell(token);
+             if (cell != null) {
+                 // Check if on horizontal track (y=6,7,8) or vertical (x=6,7,8)
+                 bool isHoriz = (cell.y >= 6 && cell.y <= 8);
+                 bool isVert = (cell.x >= 6 && cell.x <= 8);
+                 
+                 // If both (center/overlap) or neither, default to... Vertical?
+                 // Or check logic:
+                 // Red Start (0) is at (1,6)? No.
+                 // Let's rely on map layout.
+                 // If clearly horizontal arm, fire horizontal.
+                 // Else vertical.
+                 bool fireHorizontal = isHoriz && !isVert;
+                 if (isVert && !isHoriz) fireHorizontal = false;
+                 if (isHoriz && isVert) fireHorizontal = false; // Center -> Vertical?
+                 // Fallback
+                 if (!isHoriz && !isVert) fireHorizontal = false; 
+                 
+                 // Actually user said "always be vertical - the longer axis". 
+                 // Wait, "from the token's perspective".
+                 // If I am on the horizontal road, I expect to shoot down the road?
+                 // Yes.
+                 // So if y ~ 7, fire Horizontal.
+                 // If x ~ 7, fire Vertical.
+                 
+                 fireHorizontal = (cell.y - 7).abs() <= 1; // 6,7,8
+                 // But what if both? (Center safe zone).
+                 // Use "Longer axis".
+                 // If I am at (7, 13), X is constrained, Y is long? 
+                 // Actually map is symmetric.
+                 
+                 _fireLaserAxis(gs, token, fireHorizontal);
+                 _completeCardAction(gs);
+                 return EngineResult.ok(events: ["LASER_FIRED"]);
+             }
+             
+             return EngineResult.fail("Could not determine laser direction");
          } else {
              // Weapon Attacks: Dagger, Crossbow, LongBow, Spear
              // Calculate valid targets first? or let UI do it?
@@ -1567,23 +1681,21 @@ class LudoRpgEngine implements LudoRpgEngineApi {
            // Both must be on main for this math
            if (!a.isOnMain || !b.isOnMain) return EngineResult.fail("Both tokens must be on Main track");
            
-           final aAbs = toAbsoluteMainIndexFromRelative(a);
-           final bAbs = toAbsoluteMainIndexFromRelative(b);
-           
-           final cw = (aAbs - bAbs + 52) % 52;
-           final ccw = (bAbs - aAbs + 52) % 52;
-           
-           bool towardA = cw <= ccw;
-           if (source == "Movement04") towardA = !towardA; // Invert
-           
-           final step = 3;
-           final newBAbs = towardA 
-               ? (bAbs + step) % 52 
-               : (bAbs - step + 52) % 52;
-               
-           setTokenRelativeFromAbsolute(b, newBAbs);
-           _completeCardAction(gs);
-           return EngineResult.ok(events: ["FORCE_MOVE"]);
+            final aAbs = toAbsoluteMainIndexFromRelative(a);
+            final bAbs = toAbsoluteMainIndexFromRelative(b);
+            
+            final cw = (aAbs - bAbs + 52) % 52;
+            final ccw = (bAbs - aAbs + 52) % 52;
+            
+            bool towardA = cw <= ccw;
+            if (source == "Movement04") towardA = !towardA; // Invert
+            
+            final step = 3;
+            // Use safe wrapping calculation
+            final signedSteps = towardA ? step : -step;
+            teleportToken(gs, b, signedSteps);
+            _completeCardAction(gs);
+            return EngineResult.ok(events: ["FORCE_MOVE"]);
        }
        
        if (source == "Movement01") { // Astral Link
@@ -1599,64 +1711,58 @@ class LudoRpgEngine implements LudoRpgEngineApi {
            _completeCardAction(gs);
            return EngineResult.ok(events: ["LINK_ESTABLISHED"]);
        }
+
+       if (source == "Movement07") { // Swap
+            // A and B must be on main?
+            // "Swap any pawn... logic"
+            if (!a.isOnMain || !b.isOnMain) return EngineResult.fail("Both tokens must be on Main track for Swap");
+            
+            final aAbs = toAbsoluteMainIndexFromRelative(a);
+            final bAbs = toAbsoluteMainIndexFromRelative(b);
+            
+            setTokenRelativeFromAbsolute(a, bAbs);
+            setTokenRelativeFromAbsolute(b, aAbs);
+            
+            _completeCardAction(gs);
+            return EngineResult.ok(events: ["SWAPPED"]);
+       }
        
-       return EngineResult.fail("Unknown logic");
+       return EngineResult.fail("Unknown token pair source");
+  }
+
+  // --- New Handlers ---
+  EngineResult _swap(LudoRpgGameState gs) {
+      gs.pending = const PendingInteraction(type: PendingType.pickToken1, sourceCardId: "Movement07");
+      return EngineResult.needsInteraction(gs.pending!);
+  }
+
+  EngineResult _sandsOfTime(LudoRpgGameState gs) {
+      // Restart Turn Immediately
+      gs.dice.reset();
+      gs.cardActionsRemaining = 2;
+      gs.phase = TurnPhase.awaitRoll;
+      // Do not consume action? Usually effects like this consume the card but reset actions.
+      // "Take your next turn immediately" ->Implies full reset.
+      // If we consume action here, it might deduct from the *new* turn?
+      // playBoardCard decrements.
+      // If we reset to 2, playBoardCard decrement might happen AFTER?
+      // playBoardCard handles decrement if result.consumesAction.
+      // But we are inside engine. _completeCardAction decrements.
+      
+      // Implementation:
+      _completeCardAction(gs); // Decrements old (or new?)
+      // If we reset to 2, then decrement, we define 1 action left?
+      // "Next turn immediately" -> Full turn?
+      gs.cardActionsRemaining = 2; // Force 2
+      
+      return EngineResult.ok(events: ["TURN_RESTARTED"]);
   }
   
   // Duplicate _findTokenById removed.
 
-  // teleportToken is implemented below (existing method matches interface)
+
   
-  @override
-  void teleportToken(LudoRpgGameState gs, LudoToken t, int steps) {
-      if (t.isInBase) return; // Can't teleport out of base usually?
-      
-      // Handle wrapping for negative values or large positive values
-      // If forward: normal logic.
-      // If backward: need to handle wrapping around 0 -> 51.
-      
-      int newPos = t.position + steps;
-      
-      if (steps < 0) {
-          // Backward teleport
-          // If in Home Stretch (52..57), can we go back to Main?
-          if (t.isInHomeStretch) {
-              if (newPos < homeStart) {
-                   // Exited home stretch back to main
-                   newPos = homeStart - (homeStart - newPos); // e.g. 52 - 1 = 51?
-                   // Actually: 52 + (-1) = 51. Correct.
-              }
-          } else if (t.isOnMain) {
-              // Wrap around 0->51
-              newPos = (newPos % mainTrackLen); 
-              if (newPos < 0) newPos += mainTrackLen;
-          }
-      } else {
-          // Forward teleport (standard Move logic but skip collision checks along path)
-          if (t.isOnMain) {
-              if (newPos >= homeStart) {
-                  // Enter home stretch?
-                  int overshoot = newPos - homeStart;
-                  newPos = homeStart + overshoot;
-              }
-          }
-      }
-      
-      // Clamp final
-      if (newPos > goal) newPos = goal;
-      
-      t.position = newPos;
-      if (t.position == 99 || t.position == 57) {
-          t.position = 99;
-          t.status = TokenStatus.finished;
-      }
-      
-      
-      // Check for kills after teleport!
-      _handleCollisions(gs, t, []);
-      
-      _checkWinCondition(gs, t.color);
-  }
+
 
   EngineResult _resolveResurrectTarget(LudoRpgGameState gs, Map<String, dynamic> input) {
       final tokenId = input["tokenId"];
@@ -1691,26 +1797,37 @@ class LudoRpgEngine implements LudoRpgEngineApi {
       bool isValid = false;
       
       if (sourceCard == "Attack05") {
-          // Magic Spear: Check Grid Adjacency
-          // Or Ring Range 1
+          // Magic Spear: Check Grid Adjacency (pierces walls/home stretch)
           final ringTargets = _targetsInRingRange(gs: gs, attacker: source, range: 1, forward: true)
               ..addAll(_targetsInRingRange(gs: gs, attacker: source, range: 1, forward: false));
               
           if (ringTargets.any((t) => t.id == target.id)) {
               isValid = true;
           } else {
-              // Check Grid Adjacency
+              // Check Grid Adjacency (covers home stretch tokens)
               final gridTargets = _targetsInGridAdjacency(gs, source);
               if (gridTargets.any((t) => t.id == target.id)) isValid = true;
           }
       } else {
           // Dagger, Crossbow, LongBow
-          // Ring Range Forward or Backward
+          // Ring Range Forward or Backward (main track targets)
           final fwd = _targetsInRingRange(gs: gs, attacker: source, range: range, forward: true);
           final bwd = _targetsInRingRange(gs: gs, attacker: source, range: range, forward: false);
           
           if (fwd.any((t) => t.id == target.id) || bwd.any((t) => t.id == target.id)) {
               isValid = true;
+          }
+          
+          // Home stretch fallback: if target is on home stretch, use grid distance
+          if (!isValid && target.isInHomeStretch) {
+              final srcCell = _tokenGridCell(source);
+              final tgtCell = _tokenGridCell(target);
+              if (srcCell != null && tgtCell != null) {
+                  final gridDist = (srcCell.x - tgtCell.x).abs() + (srcCell.y - tgtCell.y).abs();
+                  if (gridDist <= range && !isTokenSafeFromAttack(target)) {
+                      isValid = true;
+                  }
+              }
           }
       }
       
@@ -1723,84 +1840,14 @@ class LudoRpgEngine implements LudoRpgEngineApi {
       return EngineResult.ok(events: ["ATTACK_COMPLETE"]);
   }
   
-  EngineResult _resolveAttackDirection(LudoRpgGameState gs, Map<String, dynamic> input) {
-      final axis = input["axis"]; // "horizontal" or "vertical"
-      if (axis != "horizontal" && axis != "vertical") return EngineResult.fail("Invalid axis");
-      
-      final sourceId = gs.pending!.data["sourceId"];
-      final source = _findTokenById(gs, sourceId);
-      if (source == null) return EngineResult.fail("Invalid source");
-      
-      _fireLaserAxis(gs, source, axis == "horizontal");
-      
-      _completeCardAction(gs);
-      return EngineResult.ok(events: ["LASER_FIRED"]); // UI should show beam
-  }
+
   
-  void _fireLaserAxis(LudoRpgGameState gs, LudoToken source, bool horizontal) {
-       final aCell = _tokenGridCell(source);
-       if (aCell == null) return;
-       
-       // Visual Effect
-       gs.visualEffects.add(LaserVisualEffect(origin: aCell, horizontal: horizontal));
-       
-       // Collect tokens on same line
-       final line = <(LudoToken, Point<int>)>[];
-       for (final p in gs.players) {
-           for (final t in p.tokens) {
-               if (t.isDead || t.isFinished || t.isInBase) continue;
-               if (t.color == source.color) continue; // No friendly fire
-               
-               final c = _tokenGridCell(t);
-               if (c == null) continue;
-               
-               if (horizontal && c.y == aCell.y) line.add((t, c));
-               if (!horizontal && c.x == aCell.x) line.add((t, c));
-           }
-       }
-       
-       // Sort by distance from source
-       int dist(Point<int> c) => horizontal ? (c.x - aCell.x) : (c.y - aCell.y);
-       
-       // Positive Direction
-       final positive = line.where((e) => dist(e.$2) > 0).toList()
-           ..sort((a,b) => dist(a.$2).compareTo(dist(b.$2)));
-           
-       // Negative Direction
-       final negative = line.where((e) => dist(e.$2) < 0).toList()
-           ..sort((a,b) => dist(b.$2).compareTo(dist(a.$2))); // closest first (largest negative)
-           
-       void scan(List<(LudoToken, Point<int>)> ray) {
-           for (final e in ray) {
-               if (e.$1.hasEffect("Mirror")) {
-                   gs.toast("Laser blocked by Mirror on ${e.$1.id}!");
-                   return; // Stop ray
-               }
-               _applyDamage(gs, target: e.$1, amount: 1, attacker: source, isMelee: false, events: ["LASER_HIT"]);
-           }
-       }
-       
-       scan(positive);
-       scan(negative);
-  }
+
   
-  void _fireLaser(LudoRpgGameState gs, LudoToken source) {
-      // Replaced by _resolveAttackDirection and _fireLaserAxis
-  }
-  
-  void _fireLaserRay(LudoRpgGameState gs, LudoToken source, int dir) {
-      // Replaced by _fireLaserAxis
-  }
+
   
   // Helper for checking absolute pos of a theoretical position (for Laser)
-  int toAbsoluteMainIndexFromRelative(LudoToken t, {int? overridePos}) {
-      final pos = overridePos ?? t.position;
-      if (pos < 0 || pos >= 52) return -999; 
-      // rel = (abs - offset) % 52
-      // abs = (rel + offset) % 52
-      final offset = _startOffsetAbs[t.color]!;
-      return (pos + offset) % 52;
-  }
+
 
   bool _checkWinCondition(LudoRpgGameState gs, LudoColor color) {
       final player = gs.players.firstWhere((p) => p.color == color);
@@ -1836,14 +1883,7 @@ class LudoRpgEngine implements LudoRpgEngineApi {
   
   // Update endTurn to handle ExtraTurn and SkipTurn
   // Helper to set token position from absolute main index (0..51)
-  void setTokenRelativeFromAbsolute(LudoToken t, int abs) {
-      final offset = _startOffsetAbs[t.color]!;
-      // abs = (rel + offset) % 52
-      // rel = (abs - offset) % 52
-      // Handle negative modulo correctly in Dart: (a % n + n) % n
-      final rel = (abs - offset + mainTrackLen) % mainTrackLen;
-      t.position = rel;
-  }
+
 
   void endTurn(LudoRpgGameState gs) {
     // New turn -> clear "this turn" card memory
@@ -1880,6 +1920,8 @@ class LudoRpgEngine implements LudoRpgEngineApi {
       // We need to ensure SkipTurn is removed AFTER they acknowledge it (End Turn).
       
       gs.dice.reset();
+      gs.dice.a?.clearModifiers();
+      gs.dice.b?.clearModifiers();
       gs.cardActionsRemaining = 2;
       
       // Check for Pandemic Infection
@@ -1907,10 +1949,13 @@ class LudoRpgEngine implements LudoRpgEngineApi {
   /// Ranged attacks and "cannot be attacked on star tiles" will be applied in combat resolution.
   ///
   /// This helper will be used later in attack rules:
+
+
   @override
   bool isTokenSafeFromAttack(LudoToken token) {
     if (token.isDead || token.isFinished) return true;
-    if (token.isInHomeStretch) return true; // unreachable by movement, and typically protected
+    // Home stretch tokens are NOT safe from ranged attacks (crossbow, longbow, laser, magic spear)
+    if (token.isInHomeStretch) return false;
     if (token.isOnMain) {
       final abs = toAbsoluteMainIndexFromRelative(token);
       return isStarSafeAbsolute(abs);

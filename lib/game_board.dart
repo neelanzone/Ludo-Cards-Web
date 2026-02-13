@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'dart:async';
 import 'models.dart';
@@ -58,6 +59,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   bool _isBusy = false;
   int? _animatingSlotIndex;
   bool _isDiscarding = false;
+
   int? _hoverIndex;
   bool _isRolling = false;
   
@@ -135,9 +137,18 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     // Effects Cleanup Timer (check frequently for smooth expiration)
     _effectsTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
         if (_ludo.visualEffects.isNotEmpty) {
-             setState(() {
-                 _ludo.cleanupExpiredEffects();
-             });
+             // Only rebuild if something actually expired
+             bool changed = false;
+             // We can't easily check return value of void method, 
+             // but we can check count before/after or iterate manually.
+             // For now, let's just run it and setState if not empty to be safe/simple.
+             // Or better: modify engine to return bool.
+             // For now: Just setState. It's cheap if no heavy lifting.
+             if (mounted) {
+                 setState(() {
+                     _ludo.cleanupExpiredEffects();
+                 });
+             }
         }
     });
   }
@@ -520,6 +531,65 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       }
   }
 
+  Set<String> _getHighlightTokenIds() {
+      if (_ludo.phase == TurnPhase.selectingTarget && _ludo.activeCardId != null) {
+          final template = CardLibrary.getById(_ludo.activeCardId!);
+          if (template == null) return {};
+
+          final Set<String> validIds = {};
+          
+          // Teleport
+          if (template.effectType == CardEffectType.teleport) {
+              for (var t in _ludo.currentPlayer.tokens) {
+                  // Only tokens on board (Teleport usually from track/home stretch?)
+                  // Engine logic checks: if (t.isInBase) return;
+                  if (!t.isInBase && !t.isFinished && !t.isDead) validIds.add(t.id);
+              }
+              return validIds;
+          }
+          
+          // Swap
+          if (template.effectType == CardEffectType.swapPos) {
+              for (var p in _ludo.players) {
+                  for (var t in p.tokens) {
+                      if (t.isOnMain && !t.isDead && !t.isFinished) {
+                          validIds.add(t.id);
+                      }
+                  }
+              }
+              if (_swapFirst != null) {
+                  validIds.remove(_swapFirst!.id);
+              }
+              return validIds;
+          }
+
+          // Generic TargetType
+          TargetType type = template.targetType;
+          
+          if (type == TargetType.tokenSelf) {
+             for (var t in _ludo.currentPlayer.tokens) {
+                 if (!t.isDead && !t.isFinished) validIds.add(t.id);
+             }
+          } else if (type == TargetType.tokenEnemy) {
+             for (var p in _ludo.players) {
+                 if (p.color == _ludo.currentPlayer.color) continue;
+                 for (var t in p.tokens) {
+                     // Check safety rules?
+                     // Engine usually validates this, but for UI heuristic:
+                     if (!t.isDead && !t.isFinished && !t.isInBase) {
+                        // isTokenSafeFromAttack is public in engine?
+                        if (!_engine.isTokenSafeFromAttack(t)) {
+                             validIds.add(t.id);
+                        }
+                     }
+                 }
+             }
+          }
+          return validIds;
+      }
+      return {};
+  }
+
   // _executeMove removed (logic inlined into confirm step)
   
   int _turnCount = 0;
@@ -609,30 +679,25 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     final res = _engine.playCard(gs: _ludo, card: template, target: null); // Target null for instant/pending types
     
     if (res.success) {
-        // Discard immediately if successful AND not pending
-        // If pending, we usually wait to discard? 
-        // Engine logic says: if pending, it returns success=true and pending!=null.
-        // We should probably discard the card visually now?
-        // Or wait until resolution?
-        // Most games: discard on play. The effect happens.
-        // If effect is interactive, the card is already "played".
-        // Exception: if cancelled?
-        // My engine logic: `playBoardCard` returns pending. It DOES NOT decrement action count yet (wait for resolution).
-        // So we should probably TEMPORARILY hide the card or mark it used?
-        // For simplicity: Discard it now. If they cancel, we're in trouble.
-        // But my pending system doesn't support "Cancel" easily yet (engine state is mutated).
-        // So let's discard.
-        
-        await _discardCard(index);
-        
+        // Fix for Latency: Show overlay IMMEDIATELY if pending.
         if (res.pending != null) {
             setState(() {
                 // Trigger the overlay
-                // The overlay builds based on _ludo.pending
-                // We just need to trigger a rebuild
             });
+            // Don't await discard for pending cards? 
+            // The card is technically "in limbo".
+            // If we await, the overlay won't show until animation done.
+            // Let's fire-and-forget discard? 
+            // Or better: Don't discard visually until resolution?
+            // User feedback: "Latent".
+            // So: Discard asynchronously WITHOUT awaiting.
+             _discardCard(index); 
         } else {
-           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Played ${template.name}!"), duration: const Duration(milliseconds: 800)));
+             // Instant effect (e.g. Laser, Bonus)
+             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Played ${template.name}!"), duration: const Duration(milliseconds: 800)));
+             // For instant effects, we CAN await because there's no interactive overlay to block.
+             // But consistent feel is better.
+             _discardCard(index); 
         }
     } else {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res.message ?? "Failed to play card"), duration: const Duration(milliseconds: 800)));
@@ -642,9 +707,73 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   // Track which card slot is being played (for removal)
   int? _pendingCardHandIndex;
 
+  void _handleEscape() {
+      bool changed = false;
+      
+      // 1. Deselect Token
+      if (_selectedTokenId != null) {
+          _selectedTokenId = null;
+          changed = true;
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Selection Cancelled"), duration: Duration(milliseconds: 500)));
+      }
+      
+      // 2. Clear Dice Selection
+      if (_selectedDiceIndices.isNotEmpty) {
+          _selectedDiceIndices.clear();
+          changed = true;
+      }
+      
+      // 3. Cancel Target Selection
+      if (_ludo.phase == TurnPhase.selectingTarget) {
+          _ludo.phase = TurnPhase.awaitAction;
+          _ludo.activeCardId = null;
+          _pendingCardHandIndex = null;
+          _swapFirst = null;
+          _swapSecond = null;
+          changed = true;
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Card Cancelled"), duration: Duration(milliseconds: 500)));
+      }
+      
+      // 4. Cancel Pending Overlay (e.g. Pick Token, Pick Player)
+      // Only if cancellable? Most pending states in current engine are "Wait for input".
+      // If user presses Escape, can we "Undo" the card play?
+      // Engine `activeCardId` and `pending` are set.
+      // If we clear `pending`, the engine might be stuck in limbo?
+      // Engine state: `cardActionsRemaining` was NOT deducted yet for most pending.
+      // So setting pending = null is effectively "Cancel".
+      
+      if (_ludo.pending != null) {
+          // Refund card to hand: pending cards were discarded immediately
+          // but cardActionsRemaining was NOT decremented (engine skips decrement for pending).
+          final cardId = _ludo.pending!.sourceCardId;
+          if (_ludo.sharedDiscardPile.isNotEmpty) {
+              final lastDiscard = _ludo.sharedDiscardPile.last;
+              if (lastDiscard.startsWith(cardId)) {
+                  _ludo.sharedDiscardPile.removeLast();
+                  _ludo.hands[_ludo.currentPlayer.color]!.add(lastDiscard);
+              }
+          }
+          
+          _ludo.pending = null;
+          changed = true;
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Card Refunded"), duration: Duration(milliseconds: 500)));
+      }
+      
+      if (changed) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
+            _handleEscape();
+            return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Scaffold(
       backgroundColor: _getBackgroundColor(_ludo.currentPlayer.color),
       body: Stack(
         children: [
@@ -709,6 +838,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                            activeColor: _ludo.currentPlayer.color,
                                            onTokenTap: _handleTokenTap,
                                            selectedTokenId: _selectedTokenId,
+                                           highlightTokenIds: _getHighlightTokenIds(),
                                            visualEffects: _ludo.visualEffects,
                                        ),
                                        // Center Dice Overlay
@@ -726,13 +856,13 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                               children: [
                                                 // Dice A (Left, tilted, smaller)
                                                 Positioned(
-                                                   left: 10, 
+                                                   left: 3, 
                                                    top: 8,
                                                    child: Transform.rotate(
                                                      angle: -0.2, 
                                                      child: DiceWidget(
-                                                       value: _visualA, 
-                                                       size: 45, 
+                                                       value: _ludo.dice.a?.effectiveValue ?? _visualA, 
+                                                       size: 50, 
                                                        isSelected: _selectedDiceIndices.contains(0),
                                                        isDoubled: _ludo.dice.a?.doubled ?? false,
                                                        showD12: _ludo.dice.a?.showD12 ?? false,
@@ -756,13 +886,13 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
                                                 ),
                                                 // Dice B (Right, tilted, smaller, separate)
                                                 Positioned(
-                                                   right: 10, 
+                                                   right: 3, 
                                                    top: 8,
                                                    child: Transform.rotate(
-                                                     angle: 0.25, 
+                                                     angle: 0.15, 
                                                      child: DiceWidget(
-                                                       value: _visualB, 
-                                                       size: 45, 
+                                                       value: _ludo.dice.b?.effectiveValue ?? _visualB, 
+                                                       size: 50, 
                                                        isSelected: _selectedDiceIndices.contains(1),
                                                        isDoubled: _ludo.dice.b?.doubled ?? false,
                                                        showD12: _ludo.dice.b?.showD12 ?? false,
@@ -999,8 +1129,9 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
              )
            ),
      ],
-    ),
-   );
+    ), // Stack
+    ), // Scaffold
+    ); // Focus
   }
 
   Widget _buildTutorialHint() {

@@ -9,7 +9,10 @@ import 'dice_widget.dart';
 import 'widgets/pending_overlays.dart';
 
 class GameBoard extends StatefulWidget {
-  const GameBoard({super.key});
+  final MultiplayerService? multiplayerService;
+  final bool isMultiplayer;
+
+  const GameBoard({super.key, this.multiplayerService, this.isMultiplayer = false});
 
   @override
   State<GameBoard> createState() => _GameBoardState();
@@ -77,7 +80,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
 
   // Ludo Engine
   late final LudoRpgEngine _engine;
-  late final LudoRpgGameState _ludo;
+  late LudoRpgGameState _ludo;
 
   static const double cardW = 110;
   static const double cardH = 160;
@@ -129,10 +132,23 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
     
     // Initialize Engine
     _engine = LudoRpgEngine();
-    _ludo = LudoRpgGameState(players: _buildDefaultPlayers());
 
-    // Initialize Decks and Hands via Engine
-    _engine.initializeGame(_ludo);
+    if (widget.isMultiplayer && widget.multiplayerService != null) {
+      if (widget.multiplayerService!.gameState == null) {
+           // Fallback/Error protection
+           // We shouldn't be here if null, but let's initialize a dummy to prevent crashes if we really must,
+           // or just crash with a helpful message.
+           throw Exception("started GameBoard with null multiplayer gameState");
+      }
+      // Use state from service
+      _ludo = widget.multiplayerService!.gameState!; 
+      // Listen for updates
+      widget.multiplayerService!.addListener(_onMultiplayerUpdate);
+    } else {
+      // Local Game
+      _ludo = LudoRpgGameState(players: _buildDefaultPlayers());
+      _engine.initializeGame(_ludo);
+    }
     
     // Effects Cleanup Timer (check frequently for smooth expiration)
     _effectsTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
@@ -285,10 +301,25 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
   // Debug: simple tap handler for board to test spawn/move?
   // For now, let's just create a button to roll dice.
   
+  void _onMultiplayerUpdate() {
+      if (mounted) {
+          final newState = widget.multiplayerService!.gameState;
+          if (newState != null) { 
+              setState(() {
+                  _ludo = newState;
+                  _syncDiceVisuals();
+              });
+          }
+      }
+  }
+
   @override
   void dispose() {
     _effectsTimer.cancel();
     _deckShakeController.dispose();
+    if (widget.isMultiplayer && widget.multiplayerService != null) {
+        widget.multiplayerService!.removeListener(_onMultiplayerUpdate);
+    }
     super.dispose();
   }
 
@@ -638,6 +669,80 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
       });
   }
 
+  void _showPlayedCardPopup(CardTemplate card) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black12, 
+      builder: (ctx) {
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (ctx.mounted && Navigator.canPop(ctx)) {
+            Navigator.of(ctx).pop();
+          }
+        });
+        
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.0, end: 1.0),
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutBack,
+            builder: (context, value, child) {
+              return Transform.scale(
+                scale: value,
+                child: Opacity(opacity: value, child: child),
+              );
+            },
+            child: Container(
+              width: 220,
+              height: 300,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E1E2C),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.amberAccent, width: 2),
+                boxShadow: [
+                   BoxShadow(color: Colors.black.withValues(alpha: 0.5), blurRadius: 20, spreadRadius: 5),
+                ],
+              ),
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text("PLAYED", style: TextStyle(color: Colors.white54, fontSize: 12, letterSpacing: 2)),
+                  const SizedBox(height: 12),
+                  Text(
+                    card.name,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.amberAccent,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      shadows: [Shadow(color: Colors.orange, blurRadius: 10)],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Divider(color: Colors.white24),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Text(
+                        card.description,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _handleCardTap(int index, LudoColor color) async {
     if (_isBusy || _ludo.phase == TurnPhase.ended) return;
     if (_ludo.currentPlayer.color != color) return; // Not your hand
@@ -694,7 +799,7 @@ class _GameBoardState extends State<GameBoard> with TickerProviderStateMixin {
              _discardCard(index); 
         } else {
              // Instant effect (e.g. Laser, Bonus)
-             ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Played ${template.name}!"), duration: const Duration(milliseconds: 800)));
+             _showPlayedCardPopup(template);
              // For instant effects, we CAN await because there's no interactive overlay to block.
              // But consistent feel is better.
              _discardCard(index); 

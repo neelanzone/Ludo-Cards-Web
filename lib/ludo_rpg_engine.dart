@@ -1,9 +1,11 @@
 import 'dart:math';
 import 'dart:math';
-import 'models.dart';
-import 'effects/effect_registry.dart';
-import 'effects/effect_types.dart';
-import 'board_layout.dart';
+import 'package:ludo_rpg/models.dart';
+import 'package:ludo_rpg/models/ludo_game_state.dart';
+import 'package:ludo_rpg/models/played_card.dart';
+import 'package:ludo_rpg/effects/effect_registry.dart';
+import 'package:ludo_rpg/effects/effect_types.dart';
+import 'package:ludo_rpg/board_layout.dart';
 
 // TurnPhase, DicePair, LudoRpgGameState moved to models/ludo_game_state.dart
 
@@ -217,6 +219,32 @@ class LudoRpgEngine implements LudoRpgEngineApi {
 
   LudoRpgEngine({Random? rng}) : _rng = rng ?? Random();
 
+  // Track played card in player's recent plays
+  void _trackPlayedCard(LudoRpgGameState gs, String cardTemplateId) {
+    final player = gs.currentPlayer;
+    final playedCard = PlayedCard(
+      cardTemplateId: cardTemplateId,
+      turnPlayed: 0, // Not using turn tracking
+    );
+    
+    // Add to front of list
+    player.recentPlays.insert(0, playedCard);
+    
+    // Keep only last 2
+    if (player.recentPlays.length > 2) {
+      player.recentPlays.removeLast();
+    }
+  }
+  
+  // Clean up played cards - just ensure max 2 per player
+  void _cleanupOldPlayedCards(LudoRpgGameState gs) {
+    for (final player in gs.players) {
+      while (player.recentPlays.length > 2) {
+        player.recentPlays.removeLast();
+      }
+    }
+  }
+
   // ---------- Dice ----------
   void rollDice(LudoRpgGameState gs) {
     if (gs.phase != TurnPhase.awaitRoll) return;
@@ -237,6 +265,7 @@ class LudoRpgEngine implements LudoRpgEngineApi {
 
     gs.cardActionsRemaining = 2;
     gs.phase = TurnPhase.awaitAction;
+    gs.version++;
   }
 
   // ---------- Safe tiles (stars) ----------
@@ -638,6 +667,9 @@ class LudoRpgEngine implements LudoRpgEngineApi {
   void nextTurn(LudoRpgGameState gs) {
     if (gs.phase == TurnPhase.gameOver) return;
 
+    // Clean up old played cards (older than 2 rounds)
+    _cleanupOldPlayedCards(gs);
+
     // Move to next player
     int nextIndex = (gs.currentPlayerIndex + 1) % gs.players.length;
     gs.currentPlayerIndex = nextIndex;
@@ -731,7 +763,8 @@ class LudoRpgEngine implements LudoRpgEngineApi {
       }
       
       initializeGame(gs);
-  }
+    gs.version++;
+}
 
   /// Initializes the game with a full deck and deals initial hands.
   void initializeGame(LudoRpgGameState gs) {
@@ -851,6 +884,10 @@ class LudoRpgEngine implements LudoRpgEngineApi {
         if (res.consumesAction) {
             gs.cardActionsRemaining--;
         }
+        
+        // Track played card
+        _trackPlayedCard(gs, card.id);
+        
         _checkInvariants(gs);
         
         // Also check win condition if card effect caused movement (teleport etc)
@@ -1864,22 +1901,23 @@ class LudoRpgEngine implements LudoRpgEngineApi {
 
   
   void _checkInvariants(LudoRpgGameState gs) {
-    for (var p in gs.players) {
-      for (var t in p.tokens) {
-        if (t.isDead || t.isInBase) {
-           assert(t.position == -1, "Invariant Failed: Base/Dead token ${t.id} has pos ${t.position}");
-        } else if (t.isFinished) {
-           // 99 or 57
-           assert(t.position == 99, "Invariant Failed: Finished token ${t.id} has pos ${t.position} (Expected 99)");
-        } else if (t.isInHomeStretch) {
-           assert(t.position >= 52 && t.position <= 57, "Invariant Failed: HomeStretch token ${t.id} has pos ${t.position}");
-        } else {
-           // Main Track
-           assert(t.position >= 0 && t.position < 52, "Invariant Failed: Main token ${t.id} has pos ${t.position}");
-        }
+  // gs.version++; // Removed automatic version bump in invariant check to prevent phantom drifts
+  for (var p in gs.players) {
+    for (var t in p.tokens) {
+      if (t.isDead || t.isInBase) {
+         assert(t.position == -1, "Invariant Failed: Base/Dead token ${t.id} has pos ${t.position}");
+      } else if (t.isFinished) {
+         // 99 or 57
+         assert(t.position == 99, "Invariant Failed: Finished token ${t.id} has pos ${t.position} (Expected 99)");
+      } else if (t.isInHomeStretch) {
+         assert(t.position >= 52 && t.position <= 57, "Invariant Failed: HomeStretch token ${t.id} has pos ${t.position}");
+      } else {
+         // Main Track
+         assert(t.position >= 0 && t.position < 52, "Invariant Failed: Main token ${t.id} has pos ${t.position}");
       }
     }
   }
+}
   
   // Update endTurn to handle ExtraTurn and SkipTurn
   // Helper to set token position from absolute main index (0..51)
@@ -1939,6 +1977,8 @@ class LudoRpgEngine implements LudoRpgEngineApi {
       } else {
           gs.phase = TurnPhase.awaitRoll;
       }
+    
+    gs.version++;
   }
 
    // ---------- Combat hooks (no implementation yet) ----------

@@ -9,6 +9,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  firebase_core: ^4.0.0
+  cloud_firestore: ^6.0.0
+  firebase_auth: ^6.0.0
+  uuid: ^4.2.1
+  url_launcher: ^6.2.1
 
 dev_dependencies:
   flutter_test:
@@ -20,3 +25,4 @@ flutter:
   assets:
     - assets/
     - assets/cards/
+    - assets/board.png

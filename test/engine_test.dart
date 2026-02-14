@@ -1,6 +1,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ludo_rpg/models.dart';
+import 'package:ludo_rpg/models/ludo_game_state.dart';
 import 'package:ludo_rpg/ludo_rpg_engine.dart';
 
 void main() {

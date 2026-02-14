@@ -1,4 +1,4 @@
-import '../models/cards.dart';
+import 'package:ludo_rpg/models/cards.dart';
 
 class CardLibrary {
   static const List<CardTemplate> allCards = [

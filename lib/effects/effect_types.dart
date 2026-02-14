@@ -1,4 +1,5 @@
-import '../models.dart';
+import 'package:ludo_rpg/models.dart';
+import 'package:ludo_rpg/models/ludo_game_state.dart';
 
 class EffectResult {
   final bool ok;

@@ -1,10 +1,10 @@
-import '../models.dart';
-import 'effect_types.dart';
-import 'handlers/dice_effects.dart';
-import 'handlers/turn_effects.dart';
-import 'handlers/move_effects.dart';
-import 'handlers/deck_effects.dart';
-import 'handlers/board_handler_adapter.dart';
+import 'package:ludo_rpg/models.dart';
+import 'package:ludo_rpg/effects/effect_types.dart';
+import 'package:ludo_rpg/effects/handlers/dice_effects.dart';
+import 'package:ludo_rpg/effects/handlers/turn_effects.dart';
+import 'package:ludo_rpg/effects/handlers/move_effects.dart';
+import 'package:ludo_rpg/effects/handlers/deck_effects.dart';
+import 'package:ludo_rpg/effects/handlers/board_handler_adapter.dart';
 
 final Map<CardEffectType, EffectHandler> effectRegistry = {
   // Dice (Board Cards)

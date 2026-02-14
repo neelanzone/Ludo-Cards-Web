@@ -1,11 +1,7 @@
 import 'package:flutter/material.dart'; // For LudoColor if needed, or import models?
-// Actually simpler to keep dependencies minimal.
 // We need LudoPlayer, TurnPhase. 
 
-import '../models.dart'; // Circular? No, models exports this. 
-// But we need LudoPlayer definition. 
-// LudoPlayer is in models.dart (user defined earlier).
-// Actually models.dart usually defines LudoPlayer but I saw it in `models.dart` view earlier.
+import 'package:ludo_rpg/models/core.dart';
 
 enum TurnPhase {
   awaitRoll,
@@ -14,10 +10,14 @@ enum TurnPhase {
   resolvingChoice, // <--- NEW: Generic choice resolution (Dumpster Dive etc)
   pandemicSurvival, // <--- NEW: Survival roll phase
   gameOver,
-  ended, // Maybe merge with gameOver? 'ended' was used for... turn ended? 
-         // Actually 'ended' isn't explicitly used much in my code except _handleTokenTap check.
-         // Let's keep 'ended' for turn end and add 'gameOver' for match end.
+  ended,
 }
+
+extension TurnPhaseExt on TurnPhase {
+  String toShortString() => toString().split('.').last;
+  static TurnPhase fromString(String s) => TurnPhase.values.firstWhere((e) => e.toShortString() == s, orElse: () => TurnPhase.awaitRoll);
+}
+
 
 enum PendingType {
   none,
@@ -52,11 +52,12 @@ enum PendingType {
   pickAttackDirection,
   pickAttackTarget,
   selectAttackTarget, // Alias for pickAttackTarget (legacy/refactor mixup fix)
-  
-
-
 }
 
+extension PendingTypeExt on PendingType {
+  String toShortString() => toString().split('.').last;
+  static PendingType fromString(String s) => PendingType.values.firstWhere((e) => e.toShortString() == s, orElse: () => PendingType.none);
+}
 class PendingInteraction {
   final PendingType type;
   final String sourceCardId; // e.g. "Board02"
@@ -66,6 +67,18 @@ class PendingInteraction {
     required this.sourceCardId,
     this.data = const {},
   });
+
+  Map<String, dynamic> toJson() => {
+    'type': type.toShortString(),
+    'sourceCardId': sourceCardId,
+    'data': data,
+  };
+
+  factory PendingInteraction.fromJson(Map<String, dynamic> json) => PendingInteraction(
+    type: PendingTypeExt.fromString(json['type'] ?? 'none'),
+    sourceCardId: json['sourceCardId'] ?? '',
+    data: json['data'] ?? {},
+  );
 }
 
 class DieState {
@@ -96,11 +109,31 @@ class DieState {
       prevValue = null;
       bonus = 0;
   }
+
+  Map<String, dynamic> toJson() => {
+    'value': value,
+    'used': used,
+    'doubled': doubled,
+    'multiplier': multiplier,
+    'showD12': showD12,
+    'prevValue': prevValue,
+    'bonus': bonus,
+  };
+
+  factory DieState.fromJson(Map<String, dynamic> json) => DieState(json['value'] ?? 1)
+      ..used = json['used'] ?? false
+      ..doubled = json['doubled'] ?? false
+      ..multiplier = json['multiplier'] ?? 1
+      ..showD12 = json['showD12'] ?? false
+      ..prevValue = json['prevValue']
+      ..bonus = json['bonus'] ?? 0;
 }
 
 class DicePair {
   DieState? a;
   DieState? b;
+
+  DicePair(); // Default constructor
 
   bool get rolled => a != null && b != null;
   
@@ -119,6 +152,15 @@ class DicePair {
     a = null;
     b = null;
   }
+
+  Map<String, dynamic> toJson() => {
+    'a': a?.toJson(),
+    'b': b?.toJson(),
+  };
+
+  factory DicePair.fromJson(Map<String, dynamic> json) => DicePair()
+    ..a = json['a'] != null ? DieState.fromJson(json['a']) : null
+    ..b = json['b'] != null ? DieState.fromJson(json['b']) : null;
 }
 
 class LudoRpgGameState {
@@ -173,5 +215,68 @@ class LudoRpgGameState {
   
   void cleanupExpiredEffects() {
       visualEffects.removeWhere((e) => e.isExpired);
+  }
+
+  // Versioning for Optimistic Concurrency
+  int version = 0;
+
+  Map<String, dynamic> toJson() => {
+    'version': version,
+    'players': players.map((p) => p.toJson()).toList(),
+    'currentPlayerIndex': currentPlayerIndex,
+    'phase': phase.toShortString(),
+    'winner': winner?.toShortString(),
+    'dice': dice.toJson(),
+    'cardActionsRemaining': cardActionsRemaining,
+    'turnsCompleted': turnsCompleted.map((k, v) => MapEntry(k.toShortString(), v)),
+    'activeCardId': activeCardId,
+    'sharedDrawPile': sharedDrawPile,
+    'sharedDiscardPile': sharedDiscardPile,
+    'hands': hands.map((k, v) => MapEntry(k.toShortString(), v)),
+    'pending': pending?.toJson(),
+  };
+
+  factory LudoRpgGameState.fromJson(Map<String, dynamic> json) {
+     final gs = LudoRpgGameState(
+       players: (json['players'] as List).map((p) => LudoPlayer.fromJson(p)).toList(),
+     );
+     gs.version = json['version'] ?? 0;
+     gs.currentPlayerIndex = json['currentPlayerIndex'] ?? 0;
+     gs.phase = TurnPhaseExt.fromString(json['phase'] ?? 'awaitRoll');
+     if (json['winner'] != null) gs.winner = LudoColorExt.fromString(json['winner']);
+     
+     if (json['dice'] != null) {
+        gs.dice.a = json['dice']['a'] != null ? DieState.fromJson(json['dice']['a']) : null;
+        gs.dice.b = json['dice']['b'] != null ? DieState.fromJson(json['dice']['b']) : null;
+     }
+     
+     gs.cardActionsRemaining = json['cardActionsRemaining'] ?? 2;
+     
+     if (json['turnsCompleted'] != null) {
+       (json['turnsCompleted'] as Map).forEach((k, v) {
+          gs.turnsCompleted[LudoColorExt.fromString(k)] = v as int;
+       });
+     }
+     
+     gs.activeCardId = json['activeCardId'];
+     
+     if (json['sharedDrawPile'] != null) {
+        gs.sharedDrawPile.addAll(List<String>.from(json['sharedDrawPile']));
+     }
+     if (json['sharedDiscardPile'] != null) {
+        gs.sharedDiscardPile.addAll(List<String>.from(json['sharedDiscardPile']));
+     }
+     
+     if (json['hands'] != null) {
+        (json['hands'] as Map).forEach((k, v) {
+            gs.hands[LudoColorExt.fromString(k)] = List<String>.from(v);
+        });
+     }
+     
+     if (json['pending'] != null) {
+        gs.pending = PendingInteraction.fromJson(json['pending']);
+     }
+     
+     return gs;
   }
 }

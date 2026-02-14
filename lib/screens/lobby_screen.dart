@@ -36,7 +36,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
-  LudoColor? _optimisticColor;
   bool _isBusy = false;
 
   @override
@@ -48,15 +47,21 @@ class _LobbyScreenState extends State<LobbyScreen> {
           final localId = widget.service.localPlayerId;
           final isHost = widget.service.isHost;
           
-          // Reconcile optimistic state
-          if (_optimisticColor != null && widget.service.localColor == _optimisticColor) {
-              _optimisticColor = null; // Sync complete
-          }
+          final lockedColors = widget.service.lockedColors;
+          final tentativeColors = widget.service.tentativeColors;
+          final playerReady = widget.service.playerReady;
           
+          final myTentative = tentativeColors[localId];
+          final myLocked = lockedColors.entries.where((e) => e.value == localId).map((e) => e.key).firstOrNull;
+          final iAmReady = widget.service.iAmReady;
+          
+          // Can start if all players are ready and we have at least 2 players
+          final canStart = players.isNotEmpty && players.length >= 2 && widget.service.allPlayersReady;
+
           return Scaffold(
             backgroundColor: const Color(0xFF1A1A2E),
             appBar: AppBar(
-                title: const Text("Lobby (v1.2)"),
+                title: const Text("Lobby (v2.0)"),
                 backgroundColor: Colors.transparent,
                 elevation: 0,
                 leading: IconButton(
@@ -108,27 +113,45 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                     final p = players[index];
                                     final uid = p['uid'];
                                     final name = p['name'];
-                                    final colorStr = p['color'];
-                                    final isReady = p['isReady'] ?? false;
+                                    
                                     final isMe = uid == localId;
                                     
-                                    Color? color;
-                                    if (colorStr != null) {
-                                        color = _getColor(LudoColorExt.fromString(colorStr));
+                                    // Determine display color (Locked > Tentative)
+                                    LudoColor? displayColor;
+                                    bool isLocked = false;
+                                    
+                                    // Check locked
+                                    lockedColors.forEach((c, ownerUid) {
+                                        if (ownerUid == uid) {
+                                            displayColor = c;
+                                            isLocked = true;
+                                        }
+                                    });
+                                    
+                                    // Check tentative if not locked
+                                    if (displayColor == null && tentativeColors.containsKey(uid)) {
+                                        displayColor = tentativeColors[uid];
                                     }
                                     
-                                    // Local overwrite for display
-                                    if (isMe && _optimisticColor != null) {
-                                        color = _getColor(_optimisticColor!);
-                                    }
+                                    final color = displayColor != null ? _getColor(displayColor!) : Colors.grey;
+                                    final isReady = playerReady[uid] ?? false;
                                     
                                     return ListTile(
                                         tileColor: Colors.white.withOpacity(0.05),
                                         leading: CircleAvatar(
-                                            backgroundColor: color ?? Colors.grey,
-                                            child: Icon(Icons.person, color: color == null ? Colors.white : Colors.black87),
+                                            backgroundColor: isLocked ? color : color.withOpacity(0.5),
+                                            child: Icon(Icons.person, color: displayColor == null ? Colors.white : Colors.black87),
                                         ),
-                                        title: Text("$name ${isMe ? '(You)' : ''}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                        title: Row(
+                                          children: [
+                                            Text("$name ${isMe ? '(You)' : ''}", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                            if (!isLocked && displayColor != null)
+                                                const Padding(
+                                                  padding: EdgeInsets.only(left: 8.0),
+                                                  child: Text("(Choosing...)", style: TextStyle(color: Colors.white38, fontSize: 12, fontStyle: FontStyle.italic)),
+                                                ),
+                                          ],
+                                        ),
                                         trailing: isReady 
                                             ? const Icon(Icons.check_circle, color: Colors.greenAccent)
                                             : const Icon(Icons.pending, color: Colors.orangeAccent),
@@ -141,58 +164,96 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         const SizedBox(height: 24),
                         
                         // Color Selection
-                        const Text("Choose Your Team", style: TextStyle(color: Colors.white70)),
+                        const Text("Choose Your Team (Tap to Select, Confirm to Lock)", style: TextStyle(color: Colors.white70)),
                         const SizedBox(height: 12),
                         Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: LudoColor.values.map((c) {
                                 final color = _getColor(c);
-                                final isTaken = players.any((p) => p['color'] == c.toShortString() && p['uid'] != localId);
-                                final isSelected = (widget.service.localColor == c) || (_optimisticColor == c);
+                                
+                                // Status checks
+                                final lockedOwner = lockedColors[c];
+                                final isLockedBySomeone = lockedOwner != null;
+                                final isLockedByMe = lockedOwner == localId;
+                                
+                                final tentativeOwner = tentativeColors.entries.where((e) => e.value == c).map((e) => e.key).firstOrNull;
+                                final isTentativeByMe = tentativeOwner == localId;
+                                
+                                // Visuals
+                                final isTaken = isLockedBySomeone && !isLockedByMe;
+                                final isSelected = isLockedByMe || isTentativeByMe;
                                 
                                 return Padding(
                                     padding: const EdgeInsets.symmetric(horizontal: 8.0),
                                     child: GestureDetector(
-                                        onTap: (isTaken || _isBusy) ? null : () async {
-                                            // Optimistic Update
-                                            setState(() {
-                                                _isBusy = true;
-                                                _optimisticColor = c;
-                                            });
-                                            
-                                            HapticFeedback.lightImpact();
-
-                                            bool success = await widget.service.selectColor(c);
-                                            
-                                            if (!mounted) return;
-                                            
-                                            setState(() {
-                                              _isBusy = false;
-                                              if (!success) {
-                                                  _optimisticColor = null; // Revert
-                                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to select color (Taken?).")));
-                                              }
-                                              // If success, we keep _optimisticColor until next build reconciles it
-                                            });
+                                        onTap: (isTaken || iAmReady) ? null : () {
+                                            HapticFeedback.selectionClick();
+                                            widget.service.setTentative(c);
                                         },
                                         child: AnimatedContainer(
                                             duration: const Duration(milliseconds: 200),
                                             width: isSelected ? 60 : 50,
                                             height: isSelected ? 60 : 50,
                                             decoration: BoxDecoration(
-                                                color: isTaken ? color.withOpacity(0.2) : color,
+                                                color: isTaken 
+                                                    ? color.withOpacity(0.2) 
+                                                    : (isSelected ? color : color.withOpacity(0.3)),
                                                 shape: BoxShape.circle,
-                                                border: isSelected ? Border.all(color: Colors.white, width: 3) : null,
+                                                border: isSelected 
+                                                    ? Border.all(color: Colors.white, width: 3) 
+                                                    : (isTentativeByMe ? Border.all(color: color, width: 2, style: BorderStyle.solid) : null), // Dashed border hard in simple container
                                                 boxShadow: isSelected ? [BoxShadow(color: color, blurRadius: 12)] : null,
                                             ),
-                                            child: isTaken ? const Icon(Icons.lock, color: Colors.white38) : null,
+                                            child: Stack(
+                                                alignment: Alignment.center,
+                                                children: [
+                                                    if (isLockedBySomeone)
+                                                        const Icon(Icons.lock, color: Colors.white38),
+                                                    if (tentativeOwner != null && !isLockedBySomeone && !isTentativeByMe)
+                                                        // Show small indicator that someone else is looking at this
+                                                        Container(
+                                                            width: 10, height: 10,
+                                                            decoration: const BoxDecoration(color: Colors.white54, shape: BoxShape.circle),
+                                                        ),
+                                                ],
+                                            ),
                                         ),
                                     ),
                                 );
                             }).toList(),
                         ),
                         
-                        const SizedBox(height: 48),
+                        const SizedBox(height: 32),
+                        
+                        // Action Buttons
+                        if (!iAmReady)
+                            SizedBox(
+                                width: 200,
+                                height: 50,
+                                child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                        backgroundColor: myTentative != null ? Colors.cyan : Colors.grey.shade800,
+                                        foregroundColor: Colors.white
+                                    ),
+                                    onPressed: (_isBusy || myTentative == null) ? null : () async {
+                                        setState(() => _isBusy = true);
+                                        bool success = await widget.service.confirmSelection();
+                                        if (mounted) {
+                                            setState(() => _isBusy = false);
+                                            if (!success) {
+                                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to lock color. Already taken?")));
+                                            }
+                                        }
+                                    },
+                                    child: _isBusy 
+                                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) 
+                                        : const Text("CONFIRM SELECTION"),
+                                ),
+                            )
+                        else
+                           const Text("You are Ready!", style: TextStyle(color: Colors.greenAccent, fontSize: 16, fontWeight: FontWeight.bold)),
+
+                        const SizedBox(height: 24),
                         
                         if (isHost)
                             SizedBox(
@@ -200,69 +261,37 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                 height: 56,
                                 child: ElevatedButton(
                                     style: ElevatedButton.styleFrom(
-                                        backgroundColor: players.length >= 2 ? Colors.green : Colors.grey, 
+                                        backgroundColor: canStart ? Colors.green : Colors.grey, 
                                         foregroundColor: Colors.white
                                     ),
-                                    onPressed: players.length >= 2 ? () { 
+                                    onPressed: canStart ? () { 
                                         // Initialize Game State (Host logic)
                                         final engine = LudoRpgEngine();
-                                        final fixedColors = [LudoColor.red, LudoColor.green, LudoColor.yellow, LudoColor.blue];
                                         
-                                        // Greedy Assignment Algorithm
-                                        Map<LudoColor, String> colorAssignments = {};
-                                        Map<String, int> playerLoad = {}; 
-                                        for (var p in players) {
-                                            playerLoad[p['uid']] = 0;
-                                        }
-
-                                        // 1. Respect Choices
-                                        for (var c in fixedColors) {
-                                            final matching = players.firstWhere((p) => p['color'] == c.toShortString(), orElse: () => {});
-                                            if (matching.isNotEmpty) {
-                                                colorAssignments[c] = matching['uid'];
-                                                playerLoad[matching['uid']] = (playerLoad[matching['uid']] ?? 0) + 1;
-                                            }
-                                        }
-
-                                        // 2. Fill Gaps (Round Robin / Min Load)
-                                        for (var c in fixedColors) {
-                                            if (!colorAssignments.containsKey(c)) {
-                                                // Find player with min load
-                                                var candidate = players[0];
-                                                int minLoad = playerLoad[candidate['uid']]!;
-                                                
-                                                for (var p in players) {
-                                                    int load = playerLoad[p['uid']]!;
-                                                    if (load < minLoad) {
-                                                        candidate = p;
-                                                        minLoad = load;
-                                                    }
-                                                }
-                                                
-                                                // Assign
-                                                colorAssignments[c] = candidate['uid'];
-                                                playerLoad[candidate['uid']] = minLoad + 1;
-                                            }
-                                        }
-
-                                        // 3. Build State
+                                        // Build State from Locked Colors
                                         List<LudoPlayer> gamePlayers = [];
-                                        for (var c in fixedColors) {
-                                            String uid = colorAssignments[c]!;
-                                            final tokens = List.generate(4, (i) => LudoToken(id: '${c.toShortString()}_$i', color: c));
-                                            gamePlayers.add(LudoPlayer(id: uid, color: c, tokens: tokens));
-                                        }
+                                        lockedColors.forEach((color, uid) {
+                                            final tokens = List.generate(4, (i) => LudoToken(id: '${color.toShortString()}_$i', color: color));
+                                            gamePlayers.add(LudoPlayer(id: uid, color: color, tokens: tokens));
+                                        });
+                                        
+                                        // Sort by Turn Order (Red, Green, Yellow, Blue)
+                                        gamePlayers.sort((a, b) => a.color.index.compareTo(b.color.index));
 
                                         final initialState = LudoRpgGameState(players: gamePlayers);
                                         engine.initializeGame(initialState);
                                         widget.service.startGame(initialState);
                                     } : () {
-                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Need at least 2 players to start!")));
+                                        if (players.length < 2) {
+                                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Need at least 2 players!")));
+                                        } else {
+                                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wait for everyone to Confirm!")));
+                                        }
                                     },
                                     child: const Text("START GAME", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                                 ),
                             ),
-
+ 
                         // MANUAL JOIN BUTTON (Fallback)
                         if (!isHost && widget.service.roomStatus == 'playing')
                              SizedBox(
@@ -275,11 +304,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                 ),
                              ),
                          
-                         if (!isHost && widget.service.roomStatus != 'playing')
+                         if (!isHost && widget.service.roomStatus != 'playing' && iAmReady)
                             const Text("Waiting for Host to start...", style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic)),
                             
                          const SizedBox(height: 20),
-                         Text("DEBUG: Status=${widget.service.roomStatus} | LocalID=${localId?.substring(0,4)}", style: const TextStyle(color: Colors.grey, fontSize: 10)),
+                         Text("DEBUG: Status=${widget.service.roomStatus} | Locked=${lockedColors.length}", style: const TextStyle(color: Colors.grey, fontSize: 10)),
                     ],
                 ),
             ),

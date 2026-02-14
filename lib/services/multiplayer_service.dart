@@ -20,11 +20,17 @@ class MultiplayerService extends ChangeNotifier {
   // Game State Stream
   StreamSubscription<DocumentSnapshot>? _roomSubscription;
   StreamSubscription<QuerySnapshot>? _playersSubscription;
+  StreamSubscription<DocumentSnapshot>? _lobbyStateSubscription; // New lobby state listener
   
   LudoRpgGameState? _currentGameState;
   List<Map<String, dynamic>> _lobbyPlayers = [];
   String _roomStatus = 'lobby'; // lobby, playing, ended
 
+  // New Lobby State Fields
+  Map<LudoColor, String> _lockedColors = {};
+  Map<String, LudoColor> _tentativeColors = {};
+  Map<String, bool> _playerReady = {};
+  
   User? get user => _user;
   String? get roomId => _roomId;
   String? get localPlayerId => _localPlayerId;
@@ -33,6 +39,14 @@ class MultiplayerService extends ChangeNotifier {
   List<Map<String, dynamic>> get lobbyPlayers => _lobbyPlayers;
   bool get isHost => _lobbyPlayers.isNotEmpty && _lobbyPlayers.first['uid'] == _localPlayerId;
   String get roomStatus => _roomStatus;
+  
+  Map<LudoColor, String> get lockedColors => _lockedColors;
+  Map<String, LudoColor> get tentativeColors => _tentativeColors;
+  Map<String, bool> get playerReady => _playerReady;
+  
+  // Computed helpers
+  bool get iAmReady => _playerReady[_localPlayerId] ?? false;
+  bool get allPlayersReady => _lobbyPlayers.isNotEmpty && _lobbyPlayers.every((p) => _playerReady[p['uid']] == true);
   
   String _lastSyncLog = "Waiting for sync...";
   String get lastSyncLog => _lastSyncLog;
@@ -62,7 +76,7 @@ class MultiplayerService extends ChangeNotifier {
       'maxPlayers': 4,
       'turn': 0,
       'rev': 1,
-      'takenColors': [], // Track taken colors
+      // 'takenColors': [], // Track taken colors - now handled by lobby/state
     });
     
     await joinRoom(roomId);
@@ -100,10 +114,13 @@ class MultiplayerService extends ChangeNotifier {
     
     final roomRef = _firestore.collection('rooms').doc(_roomId);
     
+    // 1. Room Metadata Listener
     _roomSubscription = roomRef.snapshots().listen((snap) {
         print("📡 SNAPSHOT RECEIVED: exists=${snap.exists}");
         if (!snap.exists) {
             print("⚠️ Room doesn't exist!");
+            _roomStatus = 'ended';
+            notifyListeners();
             return;
         }
         final data = snap.data() as Map<String, dynamic>;
@@ -158,17 +175,63 @@ class MultiplayerService extends ChangeNotifier {
         }
     });
 
+    // 2. Players List Listener
     _playersSubscription = roomRef.collection('players').orderBy('joinedAt').snapshots().listen((snap) {
         _lobbyPlayers = snap.docs.map((d) => d.data()).toList();
-        
-        // Update local color if changed remotely
-        if (_roomStatus == 'lobby') {
-             final me = _lobbyPlayers.firstWhere((p) => p['uid'] == _localPlayerId, orElse: () => {});
-             if (me.isNotEmpty) {
-                 _localColor = LudoColorExt.fromString(me['color'] ?? 'red');
-             }
-        }
         notifyListeners();
+    });
+    
+    // 3. Lobby State Listener (New)
+    _lobbyStateSubscription = roomRef.collection('lobby').doc('state').snapshots().listen((snap) {
+        if (snap.exists) {
+            final data = snap.data()!;
+            
+            // Parse Locked
+            _lockedColors.clear();
+            final lockedMap = data['locked'] as Map<String, dynamic>? ?? {};
+            lockedMap.forEach((k, v) {
+                if (v != null) {
+                    _lockedColors[LudoColorExt.fromString(k)] = v as String;
+                }
+            });
+
+            // Parse Tentative
+            _tentativeColors.clear();
+            final tentativeMap = data['tentative'] as Map<String, dynamic>? ?? {};
+            tentativeMap.forEach((k, v) {
+                if (v != null) {
+                    _tentativeColors[k] = LudoColorExt.fromString(v as String);
+                }
+            });
+
+            // Parse Ready
+            _playerReady.clear();
+            final readyMap = data['ready'] as Map<String, dynamic>? ?? {};
+            readyMap.forEach((k, v) {
+                _playerReady[k] = v as bool;
+            });
+            
+            // Update local color helper (priority: locked > tentative)
+            if (_localPlayerId != null) {
+                // If locked, usage is authoritative
+                // If not locked, use tentative
+                // We prefer locked
+                
+                // Find if I have a locked color
+                LudoColor? myLocked;
+                _lockedColors.forEach((c, uid) {
+                    if (uid == _localPlayerId) myLocked = c;
+                });
+                
+                if (myLocked != null) {
+                    _localColor = myLocked;
+                } else {
+                    _localColor = _tentativeColors[_localPlayerId];
+                }
+            }
+            
+            notifyListeners();
+        }
     });
   }
   
@@ -194,35 +257,73 @@ class MultiplayerService extends ChangeNotifier {
       }
   }
   
-  Future<bool> selectColor(LudoColor color) async {
-      if (_roomId == null) return false;
+  // Set Tentative (Fast Write)
+  Future<void> setTentative(LudoColor color) async {
+      if (_roomId == null || _localPlayerId == null) return;
+      if (iAmReady) return; // Cannot change if ready
       
+      // Check if locked by someone else
+      if (_lockedColors.containsKey(color) && _lockedColors[color] != _localPlayerId) return;
+
+      final lobbyRef = _firestore.collection('rooms').doc(_roomId).collection('lobby').doc('state');
+      
+      // Use set with merge to create if not exists
+      await lobbyRef.set({
+          'tentative': {
+              _localPlayerId: color.toShortString()
+          }
+      }, SetOptions(merge: true));
+  }
+
+  // Confirm Selection / Toggle Ready
+  Future<bool> confirmSelection() async {
+      if (_roomId == null || _localPlayerId == null) return false;
+      
+      // If already ready, unready? (Optional - for now let's say Confirm locks it)
+      // If we want to allow un-ready, we'd need a different flow. 
+      // User request says "Confirm button -> locks and sets ready".
+      
+      LudoColor? myTentative = _tentativeColors[_localPlayerId];
+      if (myTentative == null) return false; // Nothing to confirm
+      
+      final lobbyRef = _firestore.collection('rooms').doc(_roomId).collection('lobby').doc('state');
       final roomRef = _firestore.collection('rooms').doc(_roomId);
-      final colorStr = color.toShortString();
-      
+
       try {
           await _firestore.runTransaction((transaction) async {
-              final snap = await transaction.get(roomRef);
-              if (!snap.exists) throw Exception("Room deleted");
+              final snap = await transaction.get(lobbyRef);
               
-              final taken = List<String>.from(snap.data()?['takenColors'] ?? []);
-              
-              if (taken.contains(colorStr)) {
-                  throw Exception("Color taken");
+              Map<String, dynamic> lockedMap = {};
+              if (snap.exists) {
+                  lockedMap = Map<String, dynamic>.from(snap.data()?['locked'] ?? {});
               }
               
-              transaction.update(roomRef, {
-                  'takenColors': FieldValue.arrayUnion([colorStr])
-              });
+              final colorStr = myTentative!.toShortString();
               
+              // Check if taken (race condition)
+              if (lockedMap.containsKey(colorStr) && lockedMap[colorStr] != _localPlayerId) {
+                  throw Exception("Color taken during confirm");
+              }
+              
+              // Lock it
+              // Remove my ID from any other locked color (just in case)
+              lockedMap.removeWhere((k, v) => v == _localPlayerId);
+              lockedMap[colorStr] = _localPlayerId;
+              
+              transaction.set(lobbyRef, {
+                  'locked': lockedMap,
+                  'ready': { _localPlayerId: true }
+              }, SetOptions(merge: true));
+              
+              // Update player doc in root collection for legacy compatibility/display
               transaction.update(roomRef.collection('players').doc(_localPlayerId), {
                   'color': colorStr,
-                  'isReady': true, // Auto-ready
+                  'isReady': true
               });
           });
           return true;
       } catch (e) {
-          print("Select color failed: $e");
+          print("Confirm failed: $e");
           return false;
       }
   }
@@ -270,10 +371,14 @@ class MultiplayerService extends ChangeNotifier {
   void leaveRoom() {
      _roomSubscription?.cancel();
      _playersSubscription?.cancel();
+     _lobbyStateSubscription?.cancel(); // Cancel new subscription
      _roomId = null;
      _roomStatus = 'lobby';
      _lobbyPlayers = [];
      _currentGameState = null;
+     _lockedColors = {}; // Clear new state
+     _tentativeColors = {}; // Clear new state
+     _playerReady = {}; // Clear new state
      notifyListeners();
   }
 }

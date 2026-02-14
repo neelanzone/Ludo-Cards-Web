@@ -5,6 +5,7 @@ import 'dart:async';
 import 'models.dart';
 import 'ludo_board.dart';
 import 'ludo_rpg_engine.dart';
+import 'services/multiplayer_service.dart';
 import 'dice_widget.dart';
 import 'widgets/pending_overlays.dart';
 

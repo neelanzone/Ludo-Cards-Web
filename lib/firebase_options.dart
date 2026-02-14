@@ -13,7 +13,7 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyAWfmKYPzGob-Bzu_bwO05VSguQmp6UKHo',
+    apiKey: 'AIzaSyDHsAyBj2am-qyxT6_k9EsT9GKBfOPXXf8',
     appId: '1:1010777931239:web:62b5c56e349ae7c0a49142',
     messagingSenderId: '1010777931239',
     projectId: 'ludo-cards',
@@ -21,4 +21,5 @@ class DefaultFirebaseOptions {
     storageBucket: 'ludo-cards.firebasestorage.app',
     measurementId: 'G-58PMJ0TCHG',
   );
+
 }

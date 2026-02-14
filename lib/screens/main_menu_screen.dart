@@ -32,7 +32,8 @@ class MainMenuScreen extends StatelessWidget {
                     // LOGO
                     Image.asset(
                       'assets/ludo-cards-identity.png',
-                      height: 120, // Adjust as needed based on asset
+                      height: math.min(480, MediaQuery.of(context).size.height * 0.5), // 4x larger, but constrained
+                      width: math.min(600, MediaQuery.of(context).size.width * 0.9),
                       fit: BoxFit.contain,
                     ),
                     const SizedBox(height: 40),

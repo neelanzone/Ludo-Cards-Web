@@ -36,6 +36,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
   }
 
+  LudoColor? _optimisticColor;
+  bool _isBusy = false;
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -44,6 +47,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
           final players = widget.service.lobbyPlayers;
           final localId = widget.service.localPlayerId;
           final isHost = widget.service.isHost;
+          
+          // Reconcile optimistic state
+          if (_optimisticColor != null && widget.service.localColor == _optimisticColor) {
+              _optimisticColor = null; // Sync complete
+          }
           
           return Scaffold(
             backgroundColor: const Color(0xFF1A1A2E),
@@ -109,6 +117,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
                                         color = _getColor(LudoColorExt.fromString(colorStr));
                                     }
                                     
+                                    // Local overwrite for display
+                                    if (isMe && _optimisticColor != null) {
+                                        color = _getColor(_optimisticColor!);
+                                    }
+                                    
                                     return ListTile(
                                         tileColor: Colors.white.withOpacity(0.05),
                                         leading: CircleAvatar(
@@ -135,16 +148,32 @@ class _LobbyScreenState extends State<LobbyScreen> {
                             children: LudoColor.values.map((c) {
                                 final color = _getColor(c);
                                 final isTaken = players.any((p) => p['color'] == c.toShortString() && p['uid'] != localId);
-                                final isSelected = widget.service.localColor == c;
+                                final isSelected = (widget.service.localColor == c) || (_optimisticColor == c);
                                 
                                 return Padding(
                                     padding: const EdgeInsets.symmetric(horizontal: 8.0),
                                     child: GestureDetector(
-                                        onTap: isTaken ? null : () async {
+                                        onTap: (isTaken || _isBusy) ? null : () async {
+                                            // Optimistic Update
+                                            setState(() {
+                                                _isBusy = true;
+                                                _optimisticColor = c;
+                                            });
+                                            
+                                            HapticFeedback.lightImpact();
+
                                             bool success = await widget.service.selectColor(c);
-                                            if (!success && mounted) {
-                                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to select color. Try again.")));
-                                            }
+                                            
+                                            if (!mounted) return;
+                                            
+                                            setState(() {
+                                              _isBusy = false;
+                                              if (!success) {
+                                                  _optimisticColor = null; // Revert
+                                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to select color (Taken?).")));
+                                              }
+                                              // If success, we keep _optimisticColor until next build reconciles it
+                                            });
                                         },
                                         child: AnimatedContainer(
                                             duration: const Duration(milliseconds: 200),
